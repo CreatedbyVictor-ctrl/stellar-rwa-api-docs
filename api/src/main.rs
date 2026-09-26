@@ -9,6 +9,7 @@ mod config_env;
 mod indexer;
 mod indexer_metrics;
 mod models;
+mod snapshot_bounds;
 mod routes;
 
 use std::net::SocketAddr;
