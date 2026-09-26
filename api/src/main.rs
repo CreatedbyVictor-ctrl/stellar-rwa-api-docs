@@ -8,6 +8,7 @@
 mod indexer;
 mod models;
 mod routes;
+mod shutdown;
 
 use std::net::SocketAddr;
 
@@ -45,7 +46,8 @@ async fn main() {
 
     // Spawn the indexer; it owns its own clone of the shared state.
     let indexer = Indexer::new(state.clone());
-    tokio::spawn(async move { indexer.run(shutdown_rx).await });
+    let drain_rx = shutdown_rx.clone();
+    let indexer_task = tokio::spawn(async move { indexer.run(shutdown_rx).await });
 
     let app = routes::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
 
@@ -64,16 +66,25 @@ async fn main() {
     };
     tracing::info!(%addr, "listening");
 
-    if let Err(e) = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
+    let limit = shutdown::timeout();
+    if let Err(e) = shutdown::bounded(
+        drain_rx,
+        limit,
+        async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_signal(shutdown_tx))
+            .await
+        },
     )
-    .with_graceful_shutdown(shutdown_signal(shutdown_tx))
     .await
     {
         tracing::error!(error = %e, "server error");
         std::process::exit(1);
     }
+    shutdown::join_indexer(indexer_task, limit).await;
     tracing::info!("shut down cleanly");
 }
 
