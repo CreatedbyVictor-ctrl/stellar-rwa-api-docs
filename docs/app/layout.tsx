@@ -6,8 +6,17 @@ import { Sidebar } from "../components/Sidebar";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Docs",
+  title: {
+    default: "Docs",
+    template: "%s | Docs",
+  },
   description: "Documentation site",
+  openGraph: {
+    type: "website",
+    siteName: "Docs",
+    title: "Docs",
+    description: "Documentation site",
+  },
 };
 
 export default function RootLayout({
