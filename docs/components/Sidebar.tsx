@@ -10,7 +10,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
 
   return (
-    <nav className="space-y-7 text-sm" aria-label="Documentation">
+    <nav
+      className="w-full max-w-full space-y-7 overflow-x-hidden text-sm"
+      aria-label="Documentation"
+    >
       <Search />
       {NAV.map((section) => (
         <div key={section.title}>
@@ -26,7 +29,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                     href={item.href}
                     onClick={onNavigate}
                     aria-current={active ? "page" : undefined}
-                    className={`block rounded-lg px-3 py-1.5 transition-colors ${
+                    className={`block truncate rounded-lg px-3 py-1.5 transition-colors ${
                       active
                         ? "bg-brand-500/10 font-medium text-brand-300"
                         : "text-base-200/70 hover:bg-white/5 hover:text-base-100"

@@ -12,11 +12,11 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
         </div>
       </aside>
 
-      <main id="main-content" className="min-w-0 flex-1 py-10">
+      <main id="main-content" className="min-w-0 flex-1 overflow-x-hidden py-10">
         <div className="mx-auto w-full max-w-3xl">
           <VersionBanner />
         </div>
-        <article className="prose mx-auto w-full max-w-3xl">{children}</article>
+        <article className="prose mx-auto w-full max-w-3xl overflow-x-hidden">{children}</article>
         <div className="mx-auto w-full max-w-3xl">
           <PrevNext />
         </div>

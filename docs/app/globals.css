@@ -11,6 +11,14 @@ body {
   min-height: 100vh;
 }
 
+/* Prevent page-level horizontal scrolling on phones. Long code samples and
+   wide tables must scroll inside their own containers instead. */
+html,
+body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: #333a49 transparent;
@@ -23,6 +31,8 @@ body {
 /* ------------------------------------------------------------------ */
 .prose {
   @apply max-w-none text-base-200;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 .prose > * + * { margin-top: 1.15rem; }
 .prose h1 {
@@ -59,11 +69,13 @@ body {
 /* Inline code */
 .prose :not(pre) > code {
   @apply rounded-md border border-white/5 bg-white/[0.06] px-1.5 py-0.5 font-mono text-[0.85em] text-brand-300;
+  overflow-wrap: break-word;
 }
 
-/* Fenced code blocks */
+/* Fenced code blocks — scroll within their own container, never widen the page */
 .prose pre {
   @apply overflow-x-auto rounded-xl border border-white/10 bg-[#0a0c11] p-4 text-sm leading-relaxed;
+  max-width: 100%;
 }
 .prose pre code {
   @apply font-mono text-base-100;
@@ -72,11 +84,12 @@ body {
   padding: 0;
 }
 
-/* Tables */
+/* Tables — scroll horizontally inside their own wrapper */
 .prose table {
   @apply w-full border-collapse overflow-hidden rounded-lg text-sm;
   display: block;
   overflow-x: auto;
+  max-width: 100%;
 }
 .prose thead { @apply border-b border-white/10 text-left; }
 .prose th { @apply px-3 py-2 font-semibold text-base-100; }
