@@ -752,6 +752,14 @@ impl Indexer {
                 }
             };
 
+            // Honour `RWA_POLL_INTERVAL_SECS` (default `POLL_INTERVAL`); a
+            // server-advised Retry-After delay still takes precedence.
+            let backoff = if backoff == POLL_INTERVAL {
+                crate::config_env::poll_interval()
+            } else {
+                backoff
+            };
+
             tokio::select! {
                 _ = tokio::time::sleep(backoff) => {}
                 _ = shutdown.changed() => {

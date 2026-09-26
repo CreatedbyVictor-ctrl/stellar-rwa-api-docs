@@ -5,6 +5,7 @@
 //! and serves the current in-memory snapshot over HTTP. It holds no secrets,
 //! signs nothing, and never mutates on-chain state.
 
+mod config_env;
 mod indexer;
 mod indexer_metrics;
 mod models;
@@ -19,6 +20,13 @@ use tokio::sync::watch;
 #[tokio::main]
 async fn main() {
     init_tracing();
+
+    if let Err(msg) = config_env::parse_poll_interval(
+        std::env::var(config_env::POLL_INTERVAL_VAR).ok().as_deref(),
+    ) {
+        tracing::error!("config validation failed: {msg}; exiting");
+        std::process::exit(1);
+    }
 
     let config = match Config::from_env() {
         Ok(c) => c,
