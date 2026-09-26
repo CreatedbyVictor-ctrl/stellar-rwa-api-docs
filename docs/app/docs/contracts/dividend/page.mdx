@@ -122,14 +122,17 @@ const claim = dividend.call(
 
 ## Error codes
 
-| Code | Error Name | Description |
-|------|------------|-------------|
-| 1 | `AlreadyInitialized` | Contract already initialized. Callable only once. |
-| 3 | `Unauthorized` | Caller is not the admin. |
-| 4 | `DistributionNotFound` | Distribution does not exist. |
-| 5 | `InvalidAmount` | Amount is invalid (≤ 0). |
-| 6 | `NothingToClaim` | Holder has no claimable amount in this distribution. |
-| 7 | `AlreadyClaimed` | Holder has already claimed from this distribution. |
+<ErrorCodeTable
+  contract="Dividend"
+  codes={[
+    { code: 1, name: "AlreadyInitialized", cause: "initialize was called after the dividend contract was already initialized.", remediation: "Use the existing contract instance; initialization can only be performed once." },
+    { code: 3, name: "Unauthorized", cause: "create_distribution was called by an address other than the stored admin.", remediation: "Submit the operation with authorization from the stored admin address." },
+    { code: 4, name: "DistributionNotFound", cause: "claim was called with an id that does not identify a distribution.", remediation: "Check the distribution id and use an existing distribution." },
+    { code: 5, name: "InvalidAmount", cause: "create_distribution was given a total_amount less than or equal to zero.", remediation: "Set total_amount to a positive value and ensure the admin can fund it with the payment token." },
+    { code: 6, name: "NothingToClaim", cause: "The holder's calculated share for the distribution is zero, or there is no remaining claimable amount.", remediation: "Check the holder's balance at claim time and the distribution's available amount; a zero share cannot be claimed." },
+    { code: 7, name: "AlreadyClaimed", cause: "The holder has already claimed from this distribution.", remediation: "Do not submit another claim for this holder and distribution; check has_claimed or claimable first." },
+  ]}
+/>
 
 ## Security considerations
 
