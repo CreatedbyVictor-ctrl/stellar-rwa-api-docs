@@ -21,12 +21,8 @@ use tokio::sync::watch;
 async fn main() {
     init_tracing();
 
-    if let Err(msg) = config_env::parse_poll_interval(
-        std::env::var(config_env::POLL_INTERVAL_VAR).ok().as_deref(),
-    ) {
-        tracing::error!("config validation failed: {msg}; exiting");
-        std::process::exit(1);
-    }
+    // Validate every env var up front, naming each offending variable.
+    config_env::validate();
 
     let config = match Config::from_env() {
         Ok(c) => c,

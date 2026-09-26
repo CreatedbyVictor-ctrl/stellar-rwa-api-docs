@@ -32,9 +32,102 @@ pub fn poll_interval() -> Duration {
     parse_poll_interval(std::env::var(POLL_INTERVAL_VAR).ok().as_deref()).unwrap_or(POLL_INTERVAL)
 }
 
+const TESTNET_RPC: &str = "https://soroban-testnet.stellar.org";
+
+/// Validate every configuration value using `get` as the variable lookup.
+/// Returns one message per invalid variable, each naming the variable.
+pub fn validate_with<F: Fn(&str) -> Option<String>>(get: F) -> Result<(), Vec<String>> {
+    let mut errs = Vec::new();
+
+    let rpc = get("RWA_RPC_URL").unwrap_or_else(|| TESTNET_RPC.to_string());
+    match url::Url::parse(&rpc) {
+        Ok(u) if u.scheme() == "http" || u.scheme() == "https" => {}
+        Ok(_) => errs.push(format!("RWA_RPC_URL must use http or https, got {rpc:?}")),
+        Err(e) => errs.push(format!("RWA_RPC_URL is not a valid URL ({e}): {rpc:?}")),
+    }
+
+    if rpc != TESTNET_RPC && (get("RWA_REGISTRY_ID").is_none() || get("RWA_DIVIDEND_ID").is_none())
+    {
+        errs.push("RWA_REGISTRY_ID and RWA_DIVIDEND_ID are required when RWA_RPC_URL is not Testnet".to_string());
+    }
+
+    for var in ["RWA_REGISTRY_ID", "RWA_DIVIDEND_ID"] {
+        if let Some(v) = get(var) {
+            if stellar_strkey::Contract::from_string(&v).is_err() {
+                errs.push(format!("{var} is not a valid contract id (expected C... strkey): {v:?}"));
+            }
+        }
+    }
+    if let Some(v) = get("RWA_READ_SOURCE") {
+        if stellar_strkey::ed25519::PublicKey::from_string(&v).is_err() {
+            errs.push(format!("RWA_READ_SOURCE is not a valid account id (expected G... strkey): {v:?}"));
+        }
+    }
+
+    if let Err(e) = parse_poll_interval(get(POLL_INTERVAL_VAR).as_deref()) {
+        errs.push(e);
+    }
+
+    if let Some(p) = get("PORT") {
+        if p.trim().parse::<u16>().map_or(true, |n| n == 0) {
+            errs.push(format!("PORT must be an integer between 1 and 65535, got {p:?}"));
+        }
+    }
+
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        Err(errs)
+    }
+}
+
+/// Validate the process environment at startup. On failure logs every
+/// offending variable and exits with status 1.
+pub fn validate() {
+    if let Err(errs) = validate_with(|k| std::env::var(k).ok()) {
+        for e in &errs {
+            tracing::error!("invalid configuration: {e}");
+        }
+        tracing::error!("config validation failed; exiting");
+        std::process::exit(1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |k| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+    }
+
+    #[test]
+    fn empty_env_is_valid() {
+        assert!(validate_with(env(&[])).is_ok());
+    }
+
+    #[test]
+    fn bad_values_name_the_variable() {
+        let cases: &[(&str, &str)] = &[
+            ("RWA_RPC_URL", "not a url"),
+            ("RWA_REGISTRY_ID", "nope"),
+            ("RWA_DIVIDEND_ID", "GAIQ"),
+            ("RWA_READ_SOURCE", "CBX5"),
+            ("RWA_POLL_INTERVAL_SECS", "0"),
+            ("PORT", "99999"),
+        ];
+        for (var, val) in cases {
+            let (var, val) = (var.to_string(), val.to_string());
+            let errs = validate_with(|k| (k == var).then(|| val.clone())).unwrap_err();
+            assert!(errs.iter().any(|e| e.contains(&var)), "{var}: {errs:?}");
+        }
+    }
+
+    #[test]
+    fn custom_rpc_requires_contract_ids() {
+        let errs = validate_with(env(&[("RWA_RPC_URL", "https://rpc.example.com")])).unwrap_err();
+        assert!(errs[0].contains("RWA_REGISTRY_ID"));
+    }
 
     #[test]
     fn default_when_unset() {
