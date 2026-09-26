@@ -10,6 +10,9 @@ pub mod stats;
 #[cfg(test)]
 mod test_support;
 
+#[cfg(test)]
+mod cache_conditional_tests;
+
 use std::{sync::Arc, time::Duration};
 
 use axum::{
