@@ -1,44 +1,38 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
-import { DocHeader } from "@/components/DocHeader";
-import { SITE_URL } from "@/lib/site";
+import { Sidebar } from "../components/Sidebar";
 
-const description =
-  "Documentation for the Stellar RWA platform: Soroban contracts, the indexing REST API, and the web app for tokenizing real-world assets with on-chain compliance.";
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(SITE_URL),
   title: {
-    default: "Stellar RWA Docs",
-    template: "%s · Stellar RWA Docs",
+    default: "Docs",
+    template: "%s | Docs",
   },
-  description,
+  description: "Documentation site",
   openGraph: {
-    title: {
-      default: "Stellar RWA Docs",
-      template: "%s · Stellar RWA Docs",
-    },
-    description,
     type: "website",
-    url: SITE_URL,
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: {
-      default: "Stellar RWA Docs",
-      template: "%s · Stellar RWA Docs",
-    },
-    description,
+    siteName: "Docs",
+    title: "Docs",
+    description: "Documentation site",
   },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen">
-        <a href="#main-content" className="sr-only focus:not-sr-only">Skip to main content</a>
-        <DocHeader />
-        {children}
+    <html lang="en">
+      <body className={inter.className}>
+        <div className="flex min-h-screen flex-col md:flex-row">
+          <Sidebar />
+          <main className="min-w-0 flex-1 overflow-x-hidden px-4 py-6 md:px-8">
+            {children}
+          </main>
+        </div>
       </body>
     </html>
   );
