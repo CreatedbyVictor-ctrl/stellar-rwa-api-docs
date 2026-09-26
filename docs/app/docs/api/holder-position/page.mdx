@@ -1,0 +1,40 @@
+export const metadata = {
+  title: "API · Holder position",
+  description: "A holder's positions and claimable amounts across all assets in one request.",
+  canonical: "/docs/api/holder-position",
+};
+
+# Holder position
+
+<ApiEndpoint method="GET" path="/holders/:address/position" description="Positions and claimable dividends for one address across all assets." />
+
+```bash
+curl "$API_BASE_URL/v1/holders/$ADDRESS/position"
+```
+
+```json
+{
+  "address": "G...",
+  "asset_count": 1,
+  "total_value_usd": 50.0,
+  "positions": [
+    {
+      "asset_id": 1,
+      "asset_name": "Test Asset",
+      "symbol": "TST",
+      "balance": "250",
+      "share_percent": 25.0,
+      "value_usd": 50.0,
+      "claimable": [
+        { "distribution_id": 7, "payment_token": "C...", "amount": "200" }
+      ]
+    }
+  ]
+}
+```
+
+- `value_usd` is the holder's `share_percent` of the asset valuation.
+- `claimable` lists each open distribution with the holder's pro-rata share
+  (`balance / total_supply`) of the unclaimed pool, in payment-token base units.
+  It is an estimate from indexed data, not an on-chain claim quote.
+- An address with no holdings returns an empty `positions` array.

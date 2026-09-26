@@ -6,6 +6,7 @@ pub mod compliance;
 pub mod dividends;
 pub mod events;
 pub mod field_select;
+pub mod holder_position;
 pub mod holders;
 pub mod stats;
 
@@ -15,6 +16,8 @@ mod test_support;
 mod assets_query_tests;
 #[cfg(test)]
 mod field_select_tests;
+#[cfg(test)]
+mod holder_position_tests;
 
 use std::{sync::Arc, time::Duration};
 
@@ -116,6 +119,7 @@ pub fn router(state: AppState) -> Router {
             "/holders/:address/compliance",
             get(holders::by_address_compliance),
         )
+        .route("/holders/:address/position", get(holder_position::get))
         .route("/compliance/:address", get(compliance::for_address))
         .layer(middleware::from_fn(field_select::field_select))
         .layer(middleware::from_fn_with_state(state.clone(), cache_headers));
@@ -199,6 +203,7 @@ async fn index() -> Json<serde_json::Value> {
             "GET /v1/assets/:id/distributions/:did",
             "GET /v1/holders/:address",
             "GET /v1/holders/:address/compliance",
+            "GET /v1/holders/:address/position",
             "GET /v1/compliance/:address",
             "GET /health",
             "GET /metrics"
