@@ -114,13 +114,16 @@ const op = registry.call(
 
 ## Error codes
 
-| Code | Error Name | Description |
-|------|------------|-------------|
-| 1 | `AlreadyInitialized` | Contract already initialized. Callable only once. |
-| 2 | `NotInitialized` | Contract has not been initialized. |
-| 3 | `Unauthorized` | Caller is not the admin. |
-| 4 | `AssetNotFound` | Asset does not exist in the registry. |
-| 5 | `InvalidValuation` | Valuation is negative or invalid. |
+<ErrorCodeTable
+  contract="Registry"
+  codes={[
+    { code: 1, name: "AlreadyInitialized", cause: "initialize was called after the registry was already initialized.", remediation: "Use the existing registry instance; initialization can only be performed once." },
+    { code: 2, name: "NotInitialized", cause: "register_asset was called before the registry was initialized.", remediation: "Have the registry admin initialize the contract before registering assets." },
+    { code: 3, name: "Unauthorized", cause: "deactivate_asset was called by an address other than the stored admin.", remediation: "Submit the deactivation with authorization from the stored admin address." },
+    { code: 4, name: "AssetNotFound", cause: "The requested asset id does not identify an entry in the registry.", remediation: "Check the asset id against the registered assets and retry with a valid id." },
+    { code: 5, name: "InvalidValuation", cause: "register_asset was given a negative valuation.", remediation: "Provide a non-negative valuation in USD cents." },
+  ]}
+/>
 
 ## Security considerations
 

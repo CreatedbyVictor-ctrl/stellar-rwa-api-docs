@@ -3,11 +3,11 @@ import Link from "next/link";
 import { CalloutBox } from "@/components/CalloutBox";
 import { CodeBlock } from "@/components/CodeBlock";
 import { ApiEndpoint } from "@/components/ApiEndpoint";
+import { ErrorCodeTable } from "@/components/ErrorCodeTable";
 
 /**
- * Global MDX component map. Custom components (CalloutBox, ApiEndpoint,
- * CodeBlock) are made available to every `.mdx` page without per-file imports,
- * and internal links use the Next.js router.
+ * Global MDX component map. Custom components are available to every `.mdx`
+ * page without per-file imports, and internal links use the Next.js router.
  */
 export function useMDXComponents(components: MDXComponents): MDXComponents {
   return {
@@ -29,6 +29,7 @@ export function useMDXComponents(components: MDXComponents): MDXComponents {
     CalloutBox,
     CodeBlock,
     ApiEndpoint,
+    ErrorCodeTable,
     ...components,
   };
 }

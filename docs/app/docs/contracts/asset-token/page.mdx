@@ -170,16 +170,19 @@ const op = token.call(
 
 ## Error codes
 
-| Code | Error Name | Description |
-|------|------------|-------------|
-| 1 | `AlreadyInitialized` | Contract already initialized. Callable only once. |
-| 3 | `Unauthorized` | Caller is not the admin. |
-| 4 | `InsufficientBalance` | Caller does not hold enough balance to transfer or burn. |
-| 5 | `InvalidAmount` | Amount is invalid (≤ 0, exceeds bounds, or negative valuation). |
-| 6 | `Paused` | Token transfers and mints are paused. |
-| 7 | `SenderNotCompliant` | Sender failed the compliance gate. |
-| 8 | `RecipientNotCompliant` | Recipient failed the compliance gate. |
-| 9 | `Overflow` | Minting would exceed maximum supply. |
+<ErrorCodeTable
+  contract="Asset Token"
+  codes={[
+    { code: 1, name: "AlreadyInitialized", cause: "initialize was called after the token was already initialized.", remediation: "Use the existing token instance; initialization can only be performed once." },
+    { code: 3, name: "Unauthorized", cause: "An admin-only method was called by an address other than the stored admin.", remediation: "Authorize the stored admin address and submit the operation with its authorization." },
+    { code: 4, name: "InsufficientBalance", cause: "The sender's balance is less than the amount being transferred or burned.", remediation: "Use an amount no greater than the sender's current balance." },
+    { code: 5, name: "InvalidAmount", cause: "An amount is non-positive, or initialization/valuation supplies a negative total supply or valuation.", remediation: "Use a positive amount for transfers, mints, and burns, and non-negative values for supply and valuation." },
+    { code: 6, name: "Paused", cause: "A transfer or mint was attempted while the token is paused.", remediation: "Wait for the admin to unpause the token, then retry." },
+    { code: 7, name: "SenderNotCompliant", cause: "The sender failed the compliance contract's is_allowed check.", remediation: "Have the sender obtain or renew approval and ensure its jurisdiction is not blocked." },
+    { code: 8, name: "RecipientNotCompliant", cause: "The recipient failed the compliance contract's is_allowed check, including the initial recipient during initialization.", remediation: "Have the recipient obtain or renew approval and ensure its jurisdiction is not blocked." },
+    { code: 9, name: "Overflow", cause: "Minting would exceed the maximum representable token supply.", remediation: "Mint a smaller amount that keeps total supply within the supported range." },
+  ]}
+/>
 
 ## Security considerations
 

@@ -1,7 +1,8 @@
 interface ErrorCode {
   code: number;
   name: string;
-  description: string;
+  cause: string;
+  remediation: string;
 }
 
 interface ErrorCodeTableProps {
@@ -24,7 +25,8 @@ export function ErrorCodeTable({ contract, codes }: ErrorCodeTableProps) {
             <tr className="border-b border-white/10">
               <th className="text-left px-4 py-2 font-semibold text-base-100">Code</th>
               <th className="text-left px-4 py-2 font-semibold text-base-100">Error Name</th>
-              <th className="text-left px-4 py-2 font-semibold text-base-100">Description</th>
+              <th className="text-left px-4 py-2 font-semibold text-base-100">Cause</th>
+              <th className="text-left px-4 py-2 font-semibold text-base-100">Remediation</th>
             </tr>
           </thead>
           <tbody>
@@ -32,7 +34,8 @@ export function ErrorCodeTable({ contract, codes }: ErrorCodeTableProps) {
               <tr key={error.code} className="border-b border-white/5">
                 <td className="px-4 py-3 text-brand-300 font-mono">{error.code}</td>
                 <td className="px-4 py-3 font-mono text-base-200">{error.name}</td>
-                <td className="px-4 py-3 text-base-300">{error.description}</td>
+                <td className="px-4 py-3 text-base-300">{error.cause}</td>
+                <td className="px-4 py-3 text-base-300">{error.remediation}</td>
               </tr>
             ))}
           </tbody>

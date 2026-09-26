@@ -138,12 +138,15 @@ const op = compliance.call(
 
 ## Error codes
 
-| Code | Error Name | Description |
-|------|------------|-------------|
-| 1 | `AlreadyInitialized` | Contract already initialized. Callable only once. |
-| 3 | `RecordNotFound` | Address record does not exist on the allowlist. |
-| 4 | `InvalidExpiry` | Expiry ledger is in the past or invalid. |
-| 5 | `Unauthorized` | Caller is not the admin. |
+<ErrorCodeTable
+  contract="Compliance"
+  codes={[
+    { code: 1, name: "AlreadyInitialized", cause: "initialize was called after the compliance contract was already initialized.", remediation: "Use the existing contract instance; initialization can only be performed once." },
+    { code: 3, name: "RecordNotFound", cause: "suspend or remove was called for an address with no KYC record.", remediation: "Check the address and add it to the allowlist before suspending or removing it." },
+    { code: 4, name: "InvalidExpiry", cause: "A non-zero expires_at ledger is not in the future (expires_at <= the current ledger).", remediation: "Set expires_at to a future ledger, or use 0 for an approval that does not expire." },
+    { code: 5, name: "Unauthorized", cause: "An admin-only method was called by an address other than the stored admin.", remediation: "Submit the operation with authorization from the stored admin address." },
+  ]}
+/>
 
 ## Security considerations
 
