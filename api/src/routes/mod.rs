@@ -5,6 +5,7 @@ pub mod assets_query;
 pub mod compliance;
 pub mod dividends;
 pub mod events;
+pub mod field_select;
 pub mod holders;
 pub mod stats;
 
@@ -12,6 +13,8 @@ pub mod stats;
 mod test_support;
 #[cfg(test)]
 mod assets_query_tests;
+#[cfg(test)]
+mod field_select_tests;
 
 use std::{sync::Arc, time::Duration};
 
@@ -114,6 +117,7 @@ pub fn router(state: AppState) -> Router {
             get(holders::by_address_compliance),
         )
         .route("/compliance/:address", get(compliance::for_address))
+        .layer(middleware::from_fn(field_select::field_select))
         .layer(middleware::from_fn_with_state(state.clone(), cache_headers));
 
     Router::new()
