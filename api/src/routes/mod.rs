@@ -13,6 +13,9 @@ mod test_support;
 #[cfg(test)]
 mod cache_conditional_tests;
 
+#[cfg(test)]
+mod rate_limit_boundary_tests;
+
 use std::{sync::Arc, time::Duration};
 
 use axum::{
