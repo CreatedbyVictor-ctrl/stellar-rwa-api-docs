@@ -23,3 +23,16 @@ normally, and `503` with `"status": "degraded"` when it has stalled.
 The indexer is reported unhealthy when the last successful poll is older than
 `max_age_seconds`. The default is three poll intervals (30 seconds). Override it
 with the `RWA_HEALTH_MAX_POLL_AGE_SECS` environment variable.
+
+## Staleness during an RPC outage
+
+The indexer counts consecutive failed polls and reports the count as
+`consecutive_failures` in `/health`. While polls are failing, or the last
+successful poll is older than the threshold, every response carries:
+
+- `X-Data-Stale: true`
+- `X-Data-Age-Seconds`: seconds since the last successful poll
+- `X-Indexer-Consecutive-Failures`: current failure streak
+
+The previous snapshot keeps being served. When a poll succeeds again, the
+headers disappear and the recovery is logged.

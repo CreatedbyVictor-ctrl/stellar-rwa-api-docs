@@ -10,9 +10,29 @@ const LEDGER_SECS: i64 = 5;
 
 static LAST_SUCCESS_UNIX: AtomicU64 = AtomicU64::new(0);
 static LAST_LEDGER: AtomicU32 = AtomicU32::new(0);
+static CONSECUTIVE_FAILURES: AtomicU32 = AtomicU32::new(0);
 
-/// Record a successful poll that indexed up to `ledger`.
+/// Consecutive failed polls since the last success.
+pub fn consecutive_failures() -> u32 {
+    CONSECUTIVE_FAILURES.load(Ordering::Relaxed)
+}
+
+/// Record a failed poll and return the new consecutive-failure count.
+pub fn record_failure() -> u32 {
+    CONSECUTIVE_FAILURES.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+/// Record a successful poll that indexed up to `ledger`. Logs recovery when
+/// the previous polls had failed.
 pub fn record_success(ledger: u32) {
+    let failures = CONSECUTIVE_FAILURES.swap(0, Ordering::Relaxed);
+    if failures > 0 {
+        tracing::info!(
+            consecutive_failures = failures,
+            ledger,
+            "indexer recovered after failed polls"
+        );
+    }
     LAST_SUCCESS_UNIX.store(chrono::Utc::now().timestamp().max(0) as u64, Ordering::Relaxed);
     LAST_LEDGER.store(ledger, Ordering::Relaxed);
 }

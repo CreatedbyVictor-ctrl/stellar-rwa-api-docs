@@ -120,6 +120,7 @@ pub fn router(state: AppState) -> Router {
         .route("/metrics", get(metrics))
         .nest("/v1", data_routes)
         .with_state(state)
+        .layer(middleware::from_fn(crate::stale_guard::stale_headers))
         .layer(TimeoutLayer::new(Duration::from_secs(env_value(
             "RWA_REQUEST_TIMEOUT_SECS",
             REQUEST_TIMEOUT_SECS,
@@ -239,6 +240,7 @@ async fn health(State(state): State<AppState>) -> Response {
             "status": if healthy { "ok" } else { "degraded" },
             "snapshot_age_seconds": age,
             "max_age_seconds": max_age,
+            "consecutive_failures": crate::poll_status::consecutive_failures(),
             "last_poll_at": crate::poll_status::last_poll_at(),
             "last_poll_age_seconds": poll_age,
             "last_indexed_ledger": crate::poll_status::last_ledger(),

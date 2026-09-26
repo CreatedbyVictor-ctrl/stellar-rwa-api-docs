@@ -737,9 +737,11 @@ impl Indexer {
                     POLL_INTERVAL
                 }
                 Err(e) => {
+                    let consecutive_failures = crate::poll_status::record_failure();
                     metrics::counter!("rwa_indexer_refresh_total", "outcome" => "failure")
                         .increment(1);
                     tracing::warn!(
+                        consecutive_failures,
                         error = %e,
                         elapsed_ms = elapsed.as_millis() as u64,
                         "index refresh failed; keeping last snapshot"

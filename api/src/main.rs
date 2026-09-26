@@ -9,6 +9,7 @@ mod indexer;
 mod models;
 mod poll_status;
 mod routes;
+mod stale_guard;
 
 use std::net::SocketAddr;
 
