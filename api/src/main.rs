@@ -8,6 +8,7 @@
 mod indexer;
 mod models;
 mod poll_status;
+mod request_id;
 mod routes;
 mod stale_guard;
 
@@ -49,7 +50,9 @@ async fn main() {
     let indexer = Indexer::new(state.clone());
     tokio::spawn(async move { indexer.run(shutdown_rx).await });
 
-    let app = routes::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
+    let app = routes::router(state.clone())
+        .layer(axum::middleware::from_fn_with_state(state, request_id::layer))
+        .layer(tower_http::trace::TraceLayer::new_for_http());
 
     let port: u16 = std::env::var("PORT")
         .ok()
