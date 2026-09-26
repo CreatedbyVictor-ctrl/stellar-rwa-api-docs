@@ -200,12 +200,13 @@ impl AppState {
         }
     }
 
-    /// Clone the current snapshot for read-only serving.
-    pub fn snapshot(&self) -> Snapshot {
-        let guard = self.inner.load();
-        // `Guard` derefs to `&Arc<Snapshot>` under `arc-swap` 1.x, so the
-        // snapshot lives one more deref down: `**guard` is the `Snapshot`.
-        (**guard).clone()
+    /// Shared handle to the current snapshot for read-only serving.
+    ///
+    /// This bumps a reference count instead of deep-cloning the snapshot.
+    /// The returned `Arc` is immutable and stays internally consistent even
+    /// if the indexer swaps in a newer snapshot while the caller holds it.
+    pub fn snapshot(&self) -> Arc<Snapshot> {
+        self.inner.load_full()
     }
 
     /// Last ledger the indexer successfully read. Used as the ETag seed for

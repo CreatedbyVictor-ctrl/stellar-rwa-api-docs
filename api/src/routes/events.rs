@@ -7,7 +7,7 @@ use crate::models::Event;
 
 /// Recent contract events captured by the indexer.
 pub async fn list(State(state): State<AppState>) -> Json<Vec<Event>> {
-    Json(state.snapshot().events)
+    Json(state.snapshot().events.clone())
 }
 
 #[cfg(test)]
