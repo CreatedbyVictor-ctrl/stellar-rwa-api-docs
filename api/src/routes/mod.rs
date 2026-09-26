@@ -16,6 +16,8 @@ mod cache_conditional_tests;
 #[cfg(test)]
 mod rate_limit_boundary_tests;
 
+pub(crate) mod error_body;
+
 use std::{sync::Arc, time::Duration};
 
 use axum::{
@@ -137,6 +139,7 @@ pub fn router(state: AppState) -> Router {
         .layer(GovernorLayer {
             config: governor_conf,
         })
+        .layer(middleware::from_fn(error_body::normalize))
         .layer(cors)
 }
 
