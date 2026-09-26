@@ -1,6 +1,7 @@
 //! HTTP routing and the shared API error type.
 
 pub mod assets;
+pub mod assets_query;
 pub mod compliance;
 pub mod dividends;
 pub mod events;
@@ -9,6 +10,8 @@ pub mod stats;
 
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod assets_query_tests;
 
 use std::{sync::Arc, time::Duration};
 
@@ -99,7 +102,7 @@ pub fn router(state: AppState) -> Router {
     let data_routes = Router::new()
         .route("/stats", get(stats::get))
         .route("/events", get(events::list))
-        .route("/assets", get(assets::list))
+        .route("/assets", get(assets_query::list))
         .route("/assets/:id", get(assets::detail))
         .route("/assets/:id/holders", get(holders::list))
         .route("/assets/:id/compliance", get(compliance::summary))

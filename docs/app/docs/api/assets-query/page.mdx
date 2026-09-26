@@ -1,0 +1,24 @@
+export const metadata = {
+  title: "API · Filtering and sorting assets",
+  description: "Filter and sort the asset list server-side.",
+  canonical: "/docs/api/assets-query",
+};
+
+# Filtering and sorting assets
+
+`GET /v1/assets` accepts these query parameters:
+
+| Parameter | Values | Description |
+| --- | --- | --- |
+| `asset_type` | e.g. `real_estate` | Only assets of this class. |
+| `active` | `true`, `false` | Only active or inactive assets. |
+| `sort` | `valuation` | Sort by USD valuation. |
+| `order` | `asc`, `desc` (default) | Direction; requires `sort`. |
+| `offset`, `limit` | integers | Pagination (limit defaults to 50, max 100). |
+
+```bash
+curl "$API_BASE_URL/v1/assets?asset_type=real_estate&sort=valuation&order=asc"
+```
+
+Invalid or unknown parameters return `400` with a body of the form
+`{"error": "invalid_parameter", "message": "..."}`.
