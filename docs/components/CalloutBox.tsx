@@ -19,18 +19,24 @@ interface CalloutBoxProps {
 /** Highlighted advisory box used throughout the docs. */
 export function CalloutBox({ variant = "note", title, children }: CalloutBoxProps) {
   const v = VARIANTS[variant];
+  const role = variant === "danger" || variant === "warning" ? "alert" : "note";
+
   return (
-    <div className={`my-6 rounded-xl border ${v.border} ${v.bg} px-4 py-3.5`}>
+    <aside
+      role={role}
+      aria-label={title ?? v.label}
+      className={`my-6 rounded-xl border ${v.border} ${v.bg} px-4 py-3.5`}
+    >
       <div className={`mb-1 flex items-center gap-2 text-sm font-semibold ${v.text}`}>
-        <span className="flex h-5 w-5 items-center justify-center rounded-full border border-current text-xs">
+        <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center rounded-full border border-current text-xs">
           {v.icon}
         </span>
-        {title ?? v.label}
+        <span>{title ?? v.label}</span>
       </div>
-      <div className="pl-7 text-sm leading-7 text-base-200/85 [&>*+*]:mt-2 [&_a]:text-brand-400 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em]">
+      <div className="pl-7 text-sm leading-7 text-base-200 [&>*+*]:mt-2 [&_a]:text-brand-400 [&_a]:underline [&_a]:underline-offset-2 hover:[&_a]:text-brand-300 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_code]:text-base-100">
         {children}
       </div>
-    </div>
+    </aside>
   );
 }
 

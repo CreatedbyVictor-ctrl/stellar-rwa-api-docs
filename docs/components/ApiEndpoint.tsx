@@ -18,14 +18,18 @@ interface ApiEndpointProps {
 /** A method + path banner used to head an API reference section. */
 export function ApiEndpoint({ method = "GET", path, description }: ApiEndpointProps) {
   return (
-    <div className="my-6 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+    <div
+      role="region"
+      aria-label={`API endpoint: ${method} ${path}`}
+      className="my-6 rounded-xl border border-white/10 bg-white/[0.03] p-4"
+    >
       <div className="flex flex-wrap items-center gap-3">
         <span className={`rounded-md border px-2.5 py-1 font-mono text-xs font-bold ${METHOD_STYLES[method]}`}>
           {method}
         </span>
         <code className="font-mono text-sm text-base-100">{path}</code>
       </div>
-      {description && <p className="mt-2 text-sm text-base-200/75">{description}</p>}
+      {description && <p className="mt-2 text-sm text-base-200">{description}</p>}
     </div>
   );
 }

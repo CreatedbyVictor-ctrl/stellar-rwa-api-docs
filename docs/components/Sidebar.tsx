@@ -17,7 +17,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       <Search />
       {NAV.map((section) => (
         <div key={section.title}>
-          <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-base-300/70">
+          <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-base-300">
             {section.title}
           </p>
           <ul className="space-y-0.5">
@@ -29,10 +29,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                     href={item.href}
                     onClick={onNavigate}
                     aria-current={active ? "page" : undefined}
-                    className={`block truncate rounded-lg px-3 py-1.5 transition-colors ${
+                    className={`block truncate rounded-lg px-3 py-1.5 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400 ${
                       active
                         ? "bg-brand-500/10 font-medium text-brand-300"
-                        : "text-base-200/70 hover:bg-white/5 hover:text-base-100"
+                        : "text-base-200 hover:bg-white/5 hover:text-base-50"
                     }`}
                   >
                     {item.title}

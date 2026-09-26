@@ -80,15 +80,16 @@ export function Search() {
           onFocus={() => query && setIsOpen(true)}
           onKeyDown={handleInputKeyDown}
           role="combobox"
+          aria-label="Search documentation"
           aria-expanded={isOpen}
           aria-controls="search-results-list"
           aria-activedescendant={activeIndex >= 0 ? `search-result-${activeIndex}` : undefined}
           aria-autocomplete="list"
-          className="w-full rounded-lg border border-base-300/30 bg-base-900/40 px-3 py-2 text-sm text-base-100 placeholder-base-300/50 transition-colors focus:border-brand-500/50 focus:outline-none focus:ring-1 focus:ring-brand-500/20"
+          className="w-full rounded-lg border border-base-300/40 bg-base-900/60 px-3 py-2 text-sm text-base-100 placeholder-base-300 transition-colors focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-400/80"
         />
         {isOpen && results.length > 0 && (
           <div className="absolute top-full z-50 mt-2 w-full overflow-hidden rounded-lg border border-base-300/20 bg-base-900 shadow-lg">
-            <ul id="search-results-list" role="listbox" className="max-h-96 overflow-y-auto py-1">
+            <ul id="search-results-list" role="listbox" aria-label="Search suggestions" className="max-h-96 overflow-y-auto py-1">
               {results.map((result, index) => (
                 <li key={result.href} id={`search-result-${index}`} role="option" aria-selected={index === activeIndex}>
                   <Link
@@ -98,14 +99,14 @@ export function Search() {
                       setIsOpen(false);
                     }}
                     onMouseEnter={() => setActiveIndex(index)}
-                    className={`block px-3 py-2 text-sm transition-colors hover:bg-base-800 ${
-                      index === activeIndex ? "bg-base-800" : ""
+                    className={`block px-3 py-2 text-sm transition-colors hover:bg-base-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-400 ${
+                      index === activeIndex ? "bg-base-800 text-brand-300" : ""
                     }`}
                   >
                     <div className="font-medium text-base-100">{result.title}</div>
-                    <div className="text-xs text-base-300/60">{result.section}</div>
+                    <div className="text-xs text-base-300">{result.section}</div>
                     {result.excerpt && (
-                      <div className="mt-1 line-clamp-1 text-xs text-base-200/50">
+                      <div className="mt-1 line-clamp-1 text-xs text-base-200">
                         {result.excerpt}
                       </div>
                     )}
@@ -117,7 +118,7 @@ export function Search() {
         )}
         {showEmptyState && (
           <div className="absolute top-full z-50 mt-2 w-full overflow-hidden rounded-lg border border-base-300/20 bg-base-900 shadow-lg">
-            <p className="px-3 py-4 text-center text-sm text-base-300/60">
+            <p className="px-3 py-4 text-center text-sm text-base-200">
               No results for &ldquo;{query}&rdquo;.
             </p>
           </div>
@@ -126,3 +127,5 @@ export function Search() {
     </div>
   );
 }
+
+export default Search;

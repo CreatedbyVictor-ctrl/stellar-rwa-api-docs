@@ -26,6 +26,27 @@ export function useMDXComponents(components: MDXComponents): MDXComponents {
         </a>
       );
     },
+    pre: ({ children, ...props }) => (
+      <pre
+        tabIndex={0}
+        role="region"
+        aria-label="Code sample"
+        className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400"
+        {...props}
+      >
+        {children}
+      </pre>
+    ),
+    table: ({ children, ...props }) => (
+      <div
+        tabIndex={0}
+        role="region"
+        aria-label="Data table"
+        className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400 rounded-lg"
+      >
+        <table {...props}>{children}</table>
+      </div>
+    ),
     CalloutBox,
     CodeBlock,
     ApiEndpoint,

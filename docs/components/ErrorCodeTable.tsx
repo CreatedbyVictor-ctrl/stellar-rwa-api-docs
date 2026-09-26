@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 interface ErrorCode {
   code: number;
   name: string;
@@ -16,26 +18,32 @@ export function ErrorCodeTable({ contract, codes }: ErrorCodeTableProps) {
       <CalloutBox variant="warning" title={`${contract} Error Codes`}>
         <p className="text-sm mb-4">
           Error codes are <strong>contract-specific</strong>. The same numeric code means different things across contracts.
-          Always refer to the error table for the specific contract you're calling.
+          Always refer to the error table for the specific contract you&apos;re calling.
         </p>
       </CalloutBox>
-      <div className="overflow-x-auto">
+      <div
+        className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400 rounded-lg"
+        tabIndex={0}
+        role="region"
+        aria-label={`${contract} error codes table`}
+      >
         <table className="w-full text-sm border-collapse">
+          <caption className="sr-only">{contract} contract error codes</caption>
           <thead>
             <tr className="border-b border-white/10">
-              <th className="text-left px-4 py-2 font-semibold text-base-100">Code</th>
-              <th className="text-left px-4 py-2 font-semibold text-base-100">Error Name</th>
-              <th className="text-left px-4 py-2 font-semibold text-base-100">Cause</th>
-              <th className="text-left px-4 py-2 font-semibold text-base-100">Remediation</th>
+              <th scope="col" className="text-left px-4 py-2 font-semibold text-base-100">Code</th>
+              <th scope="col" className="text-left px-4 py-2 font-semibold text-base-100">Error Name</th>
+              <th scope="col" className="text-left px-4 py-2 font-semibold text-base-100">Cause</th>
+              <th scope="col" className="text-left px-4 py-2 font-semibold text-base-100">Remediation</th>
             </tr>
           </thead>
           <tbody>
             {codes.map((error) => (
               <tr key={error.code} className="border-b border-white/5">
                 <td className="px-4 py-3 text-brand-300 font-mono">{error.code}</td>
-                <td className="px-4 py-3 font-mono text-base-200">{error.name}</td>
-                <td className="px-4 py-3 text-base-300">{error.cause}</td>
-                <td className="px-4 py-3 text-base-300">{error.remediation}</td>
+                <td className="px-4 py-3 font-mono text-base-100">{error.name}</td>
+                <td className="px-4 py-3 text-base-200">{error.cause}</td>
+                <td className="px-4 py-3 text-base-200">{error.remediation}</td>
               </tr>
             ))}
           </tbody>
@@ -48,7 +56,7 @@ export function ErrorCodeTable({ contract, codes }: ErrorCodeTableProps) {
 interface CalloutBoxProps {
   variant?: "warning" | "compliance" | "default";
   title?: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
 function CalloutBox({ variant = "default", title, children }: CalloutBoxProps) {
@@ -60,8 +68,10 @@ function CalloutBox({ variant = "default", title, children }: CalloutBoxProps) {
 
   return (
     <div className={`px-4 py-3 rounded ${variantClasses[variant]}`}>
-      {title && <h4 className="font-semibold mb-2 text-base-100">{title}</h4>}
+      {title && <h3 className="font-semibold mb-2 text-base-100">{title}</h3>}
       {children}
     </div>
   );
 }
+
+export default ErrorCodeTable;
