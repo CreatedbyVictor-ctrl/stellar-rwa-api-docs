@@ -12,29 +12,74 @@ Three ways to integrate with the platform, from easiest to most direct:
 2. **Read contracts via the JS SDK** — live simulation of view calls.
 3. **Submit transactions** — sign with Freighter and invoke contract methods.
 
-## Querying the API
+## End-to-end read workflow
 
 The [REST API](/docs/api/overview) is the simplest integration surface. It is
-read-only and returns plain JSON.
+read-only and returns plain JSON. Follow this path to discover an asset, read its
+details, check an address against the asset's live compliance gate, and list its
+distributions.
 
 <CalloutBox variant="note">
-Replace <code>$API_BASE_URL</code> in the examples below with your configured base URL, or set the environment variable <code>NEXT_PUBLIC_API_BASE_URL</code>.
+Set <code>API_BASE_URL</code> to the API origin (for example,
+<code>http://localhost:8080</code>); the versioned data routes use the
+<code>/v1</code> prefix.
 </CalloutBox>
 
 ```bash
-# platform stats
-curl $API_BASE_URL/stats
+# 1. Discover assets and choose a registry id from the response.
+curl "$API_BASE_URL/v1/assets"
 
-# all assets, then one asset's holders and dividends
-curl $API_BASE_URL/assets
-curl $API_BASE_URL/assets/1/holders
-curl $API_BASE_URL/assets/1/dividends
+# 2. Read the chosen asset. Note its compliance_contract and id.
+curl "$API_BASE_URL/v1/assets/1"
 ```
+
+3. Check an address against that asset's **live on-chain** compliance gate. Use
+the `compliance_contract` from the asset response and a valid simulation source
+account; no signing or submission is needed:
+
+```ts
+import {
+  Account, Address, BASE_FEE, Contract, Networks, TransactionBuilder,
+  rpc, scValToNative,
+} from "@stellar/stellar-sdk";
+
+const server = new rpc.Server("https://soroban-testnet.stellar.org");
+const complianceContract = "<compliance_contract from step 2>";
+const investor = "<Stellar address to check>";
+const source = new Account(
+  "GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA", "0",
+);
+
+const tx = new TransactionBuilder(source, {
+  fee: BASE_FEE, networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(new Contract(complianceContract).call(
+    "is_allowed",
+    new Address(investor).toScVal(),
+  ))
+  .setTimeout(30)
+  .build();
+
+const sim = await server.simulateTransaction(tx);
+if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+const allowed = scValToNative(sim.result!.retval) as boolean;
+console.log({ investor, allowed });
+```
+
+```bash
+# 4. List distributions for the same registry id.
+curl "$API_BASE_URL/v1/assets/1/dividends"
+```
+
+The `/v1/compliance/:address` API route is an indexed view of an address's
+current holdings, not a live compliance-contract check. Use `is_allowed` above
+when deciding whether a transfer will pass the on-chain gate. The indexer refreshes
+about every 10 seconds, so API data may lag current contract state.
 
 ### TypeScript client
 
 ```ts
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+const API = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080"}/v1`;
 
 export interface Asset {
   id: number;
