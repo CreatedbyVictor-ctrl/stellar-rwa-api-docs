@@ -216,6 +216,7 @@ impl AppState {
 
     fn replace(&self, mut next: Snapshot) {
         next.prune_stale_asset_maps();
+        crate::indexer_metrics::record_snapshot(&next);
         self.inner.store(Arc::new(next));
     }
 

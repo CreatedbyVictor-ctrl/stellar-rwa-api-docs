@@ -6,6 +6,7 @@
 //! signs nothing, and never mutates on-chain state.
 
 mod indexer;
+mod indexer_metrics;
 mod models;
 mod routes;
 
