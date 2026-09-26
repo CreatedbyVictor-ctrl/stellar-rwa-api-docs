@@ -36,13 +36,14 @@ retries on the next tick. The API never panics on a transient failure.
 There is currently **no authentication** required to call the API. All endpoints
 are open to the public.
 
-**Rate limits and HTTP caching (ETag) are being introduced.** See the dedicated
-reference for the full specification:
+The API applies request throttling, and its `/v1` data routes support HTTP
+caching with `Cache-Control` and ETags. The `X-RateLimit-*` response headers
+described in the reference are planned; caching is already available:
 
 <CalloutBox variant="tip">
 See <a href="/docs/api/rate-limits">Rate Limits &amp; Caching</a> for the
-planned <code>X-RateLimit-*</code> headers, <code>429</code> behaviour, ETag
-conditional-request flow, and polling recommendations.
+active ETag conditional-request flow and cache headers, along with the planned
+rate-limit response headers and polling recommendations.
 </CalloutBox>
 
 ### Data freshness and caching

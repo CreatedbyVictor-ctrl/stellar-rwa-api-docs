@@ -7,10 +7,9 @@ export const metadata = {
 # Rate Limits & Caching
 
 <CalloutBox variant="note">
-Rate limiting and ETag support are **not yet enforced** on the current Testnet
-deployment. This page documents the planned behaviour so integrators can build to
-the correct contract before it goes live. The section headings will be updated and
-this callout removed once the features ship.
+ETag caching is active on the versioned <code>/v1</code> data routes. The
+rate-limit response headers and examples in the first section describe planned
+behavior; they are not the headers currently returned by the API.
 </CalloutBox>
 
 ## Rate limits
@@ -59,36 +58,36 @@ so polling faster than that does not give you fresher data anyway.
 
 ## HTTP caching with ETags
 
-Every cacheable endpoint returns a strong `ETag` derived from the content hash of
-the serialized snapshot. This lets clients skip parsing a full response body when
-nothing has changed.
+Every `/v1` data route returns an `ETag` derived from the last indexed ledger.
+For example, ledger `3514152` produces `"ledger-3514152"`. The indexer refreshes
+about every 10 seconds, so this tag changes when it advances to a new indexed
+ledger; requests against the same indexed ledger can reuse the existing response.
 
 ### How it works
 
-1. Make a normal request — the response includes an `ETag` header.
-2. On the next request, send the value back in `If-None-Match`.
-3. If the snapshot has not changed, the server returns `304 Not Modified` with an
-   empty body, saving bandwidth and counting as **one request** against your rate
-   limit.
-4. If the snapshot has changed, the server returns `200 OK` with the new body and
-   a new `ETag`.
+1. Make a normal request — the response includes `ETag` and `Cache-Control`.
+2. On the next request, send that exact ETag value in `If-None-Match`.
+3. If the indexed ledger has not changed, the server returns `304 Not Modified`
+   with an empty body and the current cache headers.
+4. If the indexed ledger has advanced, the server returns `200 OK` with the
+   response body and a new `ETag`.
 
 ```bash
 # First request — capture the ETag
-curl -i $API_BASE_URL/assets/1
+curl -i $API_BASE_URL/v1/assets/1
 # HTTP/1.1 200 OK
-# ETag: "a3f9c2b1d4e7"
-# Cache-Control: no-cache
+# Cache-Control: public, max-age=10
+# ETag: "ledger-3514152"
 
 # Second request — send the ETag back
-curl -i -H 'If-None-Match: "a3f9c2b1d4e7"' $API_BASE_URL/assets/1
-# HTTP/1.1 304 Not Modified   ← no body, not re-counted as a full hit
+curl -i -H 'If-None-Match: "ledger-3514152"' $API_BASE_URL/v1/assets/1
+# HTTP/1.1 304 Not Modified   ← empty body
 ```
 
 ### TypeScript helper
 
 ```ts
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+const API = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080"}/v1`;
 
 const etagCache = new Map<string, { etag: string; data: unknown }>();
 
@@ -119,27 +118,30 @@ export async function fetchWithEtag<T>(path: string): Promise<T> {
 
 ### Which endpoints support ETags?
 
-All read endpoints that return JSON data support ETags. The `/health` endpoint
-does **not** return an `ETag` because liveness probes should always get a fresh
-`200`.
+All snapshot-backed `/v1` data routes support ETags. Root, `/version`,
+`/health`, and `/metrics` are outside these routes and do not use this caching
+middleware.
 
 | Endpoint | ETag |
 |----------|------|
-| `GET /stats` | ✅ |
-| `GET /events` | ✅ |
-| `GET /assets` | ✅ |
-| `GET /assets/:id` | ✅ |
-| `GET /assets/:id/holders` | ✅ |
-| `GET /assets/:id/compliance` | ✅ |
-| `GET /assets/:id/dividends` | ✅ |
-| `GET /health` | ❌ |
+| `GET /v1/stats` | ✅ |
+| `GET /v1/events` | ✅ |
+| `GET /v1/assets` | ✅ |
+| `GET /v1/assets/:id` | ✅ |
+| `GET /v1/assets/:id/holders` | ✅ |
+| `GET /v1/assets/:id/compliance` | ✅ |
+| `GET /v1/assets/:id/dividends` | ✅ |
+| `GET /v1/assets/:id/distributions/:did` | ✅ |
+| `GET /v1/holders/:address` | ✅ |
+| `GET /v1/holders/:address/compliance` | ✅ |
+| `GET /v1/compliance/:address` | ✅ |
 
 ## Cache-Control
 
-The API sets `Cache-Control: no-cache` on all responses. This tells intermediate
-proxies (CDNs, reverse proxies) to revalidate with the origin on every request,
-but still allows ETag-based conditional requests from the client. It intentionally
-does **not** set `max-age`, since the state can change as often as every 10 seconds.
+The API sets `Cache-Control: public, max-age=10` on `/v1` data-route responses.
+This allows shared and client caches to reuse a response for up to 10 seconds,
+matching the approximate index refresh interval. After that, send the stored
+ETag in `If-None-Match` to check whether the indexed ledger has advanced.
 
 If you are fronting the API with a CDN, configure it to **forward** the
 `If-None-Match` / `ETag` headers so conditional requests reach the origin rather
