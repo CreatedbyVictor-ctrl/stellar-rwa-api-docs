@@ -224,8 +224,10 @@ async fn health(State(state): State<AppState>) -> Response {
             .num_seconds()
             .max(0)
     });
-    let max_age = (POLL_INTERVAL * 3).as_secs() as i64;
-    let healthy = age.is_some_and(|seconds| seconds <= max_age);
+    let max_age = crate::poll_status::max_poll_age(POLL_INTERVAL);
+    let poll_age = crate::poll_status::last_poll_age_seconds();
+    let healthy = age.is_some_and(|seconds| seconds <= max_age)
+        && poll_age.is_some_and(|seconds| seconds <= max_age);
     let status = if healthy {
         StatusCode::OK
     } else {
@@ -237,6 +239,10 @@ async fn health(State(state): State<AppState>) -> Response {
             "status": if healthy { "ok" } else { "degraded" },
             "snapshot_age_seconds": age,
             "max_age_seconds": max_age,
+            "last_poll_at": crate::poll_status::last_poll_at(),
+            "last_poll_age_seconds": poll_age,
+            "last_indexed_ledger": crate::poll_status::last_ledger(),
+            "ledger_lag": crate::poll_status::estimated_ledger_lag(),
         })),
     )
         .into_response()

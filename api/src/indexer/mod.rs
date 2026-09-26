@@ -726,6 +726,7 @@ impl Indexer {
 
             let backoff = match result {
                 Ok(count) => {
+                    crate::poll_status::record_success(self.state.last_indexed_ledger());
                     metrics::counter!("rwa_indexer_refresh_total", "outcome" => "success")
                         .increment(1);
                     tracing::info!(

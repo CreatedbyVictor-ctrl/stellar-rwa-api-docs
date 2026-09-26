@@ -7,6 +7,7 @@
 
 mod indexer;
 mod models;
+mod poll_status;
 mod routes;
 
 use std::net::SocketAddr;
