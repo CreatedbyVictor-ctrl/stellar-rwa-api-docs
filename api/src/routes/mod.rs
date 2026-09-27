@@ -42,6 +42,14 @@ fn env_value<T: std::str::FromStr>(name: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
+fn rate_limit_period(per_second: u64) -> Duration {
+    if per_second == 0 {
+        Duration::ZERO
+    } else {
+        Duration::from_secs(1).div_f64(per_second as f64)
+    }
+}
+
 /// Errors surfaced to API clients as a JSON body with an appropriate status.
 #[derive(Debug)]
 pub enum ApiError {
@@ -85,7 +93,7 @@ pub fn router(state: AppState) -> Router {
     // itself touches shared state, so a throttled request stays cheap.
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(per_second)
+            .period(rate_limit_period(per_second))
             .burst_size(burst)
             .finish()
             .expect("rate limit config: period and burst size are non-zero"),
@@ -279,7 +287,16 @@ mod tests {
 
     use crate::indexer::AppState;
 
-    use super::router;
+    use super::{rate_limit_period, router};
+
+    #[test]
+    fn rate_limit_setting_is_requests_per_second() {
+        assert_eq!(
+            rate_limit_period(5),
+            std::time::Duration::from_millis(200)
+        );
+        assert_eq!(rate_limit_period(0), std::time::Duration::ZERO);
+    }
 
     async fn assert_json_content_type(app: Router, uri: &str, status: StatusCode) {
         // This is the only test that exercises the full `router()`, rate
