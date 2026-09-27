@@ -79,7 +79,8 @@ available within ~10 seconds.
 
 ### 2. Hit the live endpoints
 
-Open a second terminal and run these commands against `http://localhost:8080`:
+Open a second terminal and run these commands against `http://localhost:8080`.
+Data endpoints use the `/v1` prefix; the liveness probe is `/health`.
 
 **Check the liveness probe:**
 
@@ -94,7 +95,7 @@ curl http://localhost:8080/health
 **Fetch platform-wide stats:**
 
 ```bash
-curl http://localhost:8080/stats
+curl http://localhost:8080/v1/stats
 ```
 
 ```json
@@ -117,7 +118,7 @@ Soroban RPC poll.
 **List all tokenized assets:**
 
 ```bash
-curl http://localhost:8080/assets
+curl http://localhost:8080/v1/assets
 ```
 
 ```json
@@ -140,7 +141,7 @@ curl http://localhost:8080/assets
 **Fetch the sample asset (id `1`) directly:**
 
 ```bash
-curl http://localhost:8080/assets/1
+curl http://localhost:8080/v1/assets/1
 ```
 
 ```json
@@ -158,10 +159,25 @@ curl http://localhost:8080/assets/1
 }
 ```
 
+The response includes an `ETag` and `Cache-Control` header. Send the returned
+ETag on the next request; if the indexed snapshot has not changed, the API
+returns `304 Not Modified` with no body, so reuse your cached response:
+
+```bash
+# Capture the ETag from the first response
+curl -i http://localhost:8080/v1/assets/1
+# ETag: "ledger-3514152"
+# Cache-Control: public, max-age=10
+
+# Send the ETag on a later request (use the value your response returned)
+curl -i -H 'If-None-Match: "ledger-3514152"' http://localhost:8080/v1/assets/1
+# HTTP/1.1 304 Not Modified
+```
+
 **Check token holders for asset `1`:**
 
 ```bash
-curl http://localhost:8080/assets/1/holders
+curl http://localhost:8080/v1/assets/1/holders
 ```
 
 ```json
@@ -174,10 +190,24 @@ curl http://localhost:8080/assets/1/holders
 ]
 ```
 
+Both the asset list and holder list support `offset` and `limit` query
+parameters. `offset` is the number of records to skip (starting at 0); `limit`
+defaults to 50 and is capped at 100:
+
+```bash
+# First and second pages of assets (20 per page)
+curl 'http://localhost:8080/v1/assets?offset=0&limit=20'
+curl 'http://localhost:8080/v1/assets?offset=20&limit=20'
+
+# First 10 holders, then the next 10 for asset 1
+curl 'http://localhost:8080/v1/assets/1/holders?offset=0&limit=10'
+curl 'http://localhost:8080/v1/assets/1/holders?offset=10&limit=10'
+```
+
 **Check the compliance summary for asset `1`:**
 
 ```bash
-curl http://localhost:8080/assets/1/compliance
+curl http://localhost:8080/v1/assets/1/compliance
 ```
 
 ```json
