@@ -24,14 +24,15 @@ API's JSON error format:
 
 ```
 HTTP/1.1 429 Too Many Requests
-Too Many Requests! Wait for 1s
+Too Many Requests! Wait for <seconds>s
 ```
 
-The wait time in the body is an example; the API does not currently send
+The number of seconds varies with the time until the next token is available.
+The API does not currently send
 `Retry-After` or `X-RateLimit-*` headers. On `429`, pause for at least the
-indicated number of seconds when present. Otherwise, use exponential backoff with
-jitter (for example, start at one second and cap the delay), and retry only
-idempotent requests.
+indicated number of seconds when present, with a minimum one-second delay.
+Otherwise, use exponential backoff with jitter (and cap the delay), and retry
+only idempotent requests.
 
 <CalloutBox variant="tip">
 For polling use cases, the indexer refreshes its state about every 10 seconds, so
