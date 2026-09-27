@@ -265,6 +265,27 @@ custody real value. A mainnet deployment requires a full securities-compliance
 and legal review.
 </CalloutBox>
 
+## Mainnet integration
+
+The Testnet settings above are not interchangeable with Mainnet. Before pointing
+an integration at Mainnet, set and verify each network-specific value:
+
+| Setting | Testnet | Mainnet |
+|---------|---------|---------|
+| Network passphrase | `Test SDF Network ; September 2015` | `Public Global Stellar Network ; September 2015` |
+| Soroban RPC | `https://soroban-testnet.stellar.org` | Use a Mainnet Soroban RPC URL from your chosen provider; endpoint URLs and access terms are provider-specific. |
+| Contract IDs | The Testnet IDs listed below | Deploy the contracts to Mainnet and use the resulting Mainnet IDs. Contract IDs are network-specific; this project does not publish a Mainnet deployment. |
+| Read source | An account that exists on Testnet | Set `RWA_READ_SOURCE` to a valid account on Mainnet that your RPC can use for simulation. |
+| Fees | Testnet XLM has no real-world value | Mainnet transactions and deployments consume real XLM. Base and Soroban resource fees vary; simulate and assemble transactions to estimate fees rather than copying a Testnet fee. |
+
+For the API, set `RWA_RPC_URL`, `RWA_REGISTRY_ID`, and `RWA_DIVIDEND_ID` to
+Mainnet values. The service requires explicit registry and dividend IDs whenever
+the RPC URL is not the default Testnet endpoint. Configure the asset-token and
+compliance IDs in any client that calls those contracts directly. The API's
+read-only simulations do not submit transactions; deployments and writes do incur
+Mainnet fees. See the [Integration Guide](/docs/integration) for the
+simulate-and-assemble flow.
+
 ## Deployed contract addresses (Testnet)
 
 | Contract    | Contract ID |
