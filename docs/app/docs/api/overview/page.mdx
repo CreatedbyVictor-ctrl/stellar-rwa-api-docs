@@ -33,8 +33,10 @@ retries on the next tick. The API never panics on a transient failure.
 
 ### Authentication and rate limiting
 
-There is currently **no authentication** required to call the API. All endpoints
-are open to the public.
+There is currently **no authentication** required to call the data endpoints
+(everything under `/v1`, plus `/`, `/version` and `/health`). The one exception
+is the operator-only [`/metrics`](#metrics-endpoint) endpoint, which requires a
+bearer token.
 
 **Rate limits and HTTP caching (ETag) are being introduced.** See the dedicated
 reference for the full specification:
@@ -57,6 +59,154 @@ Soroban RPC. This means:
 
 For integrations where you need real-time data, consider reading contracts directly
 via Soroban RPC.
+
+### Metrics endpoint
+
+`GET /metrics` exposes indexer health in the
+[Prometheus text exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/)
+(`Content-Type: text/plain; version=0.0.4`). It is intended for operators, not
+API consumers, and is **not** part of the `/v1` namespace or its stability
+promise.
+
+#### Authentication
+
+The endpoint is protected by a static bearer token configured on the server:
+
+| Environment variable | Purpose |
+|----------------------|---------|
+| `RWA_METRICS_TOKEN` | Shared secret that scrapers must present. |
+
+Scrapers send it in the `Authorization` header:
+
+```bash
+curl -H "Authorization: Bearer $RWA_METRICS_TOKEN" http://localhost:8080/metrics
+```
+
+- The header must be exactly `Bearer <token>`; the token is compared verbatim.
+- A missing, malformed or wrong token returns `401 Unauthorized` with the plain
+  text body `metrics authentication required`.
+- If `RWA_METRICS_TOKEN` is **unset or empty**, the endpoint is disabled and
+  every request returns `401`. There is no way to expose metrics without a token.
+- The variable is read on every request, but since it comes from the process
+  environment, rotating it means restarting the API with the new value.
+
+<CalloutBox variant="warning">
+Treat <code>RWA_METRICS_TOKEN</code> like any other secret: generate a long random
+value (for example <code>openssl rand -hex 32</code>), keep it out of source control,
+and serve the API over TLS so the token is not sent in clear text.
+</CalloutBox>
+
+#### Exposed metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rwa_indexer_refresh_duration_seconds` | summary | — | Wall-clock time of each indexer refresh (one sample per poll tick, successful or not). Rendered with `quantile` series plus `_sum` and `_count`. |
+| `rwa_indexer_refresh_total` | counter | `outcome` = `success` \| `failure` | Number of completed refresh attempts. A failure means the whole tick failed and the previous snapshot kept being served. |
+| `rwa_indexer_asset_read_errors_total` | counter | `asset_id`, `read` = `get_metadata` \| `compliance` \| `dividends` \| `dividend_decode` | Per-asset RPC reads that failed during an otherwise successful refresh. |
+
+Series only appear after they are first recorded, so a freshly started API may
+return an empty body until the first refresh completes, and
+`rwa_indexer_asset_read_errors_total` is absent until a read actually fails.
+
+Useful alert starting points:
+
+```promql
+# Refreshes are failing
+rate(rwa_indexer_refresh_total{outcome="failure"}[5m]) > 0
+
+# No successful refresh in the last minute (normal cadence is ~10s)
+increase(rwa_indexer_refresh_total{outcome="success"}[1m]) == 0
+
+# A specific asset keeps failing to read
+increase(rwa_indexer_asset_read_errors_total[15m]) > 0
+```
+
+For snapshot age, use `GET /health`, which returns `503` with
+`"status": "degraded"` once the snapshot is older than three poll intervals.
+
+#### Example scrape configuration
+
+Store the token in a file readable by Prometheus and reference it with
+`credentials_file`, so it never appears in the config itself:
+
+```yaml
+scrape_configs:
+  - job_name: stellar-rwa-api
+    scrape_interval: 15s
+    metrics_path: /metrics
+    scheme: https
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/rwa-metrics-token
+    static_configs:
+      - targets: ["rwa-api.example.com"]
+```
+
+A scrape interval of 10–15 seconds matches the indexer's poll cadence; scraping
+faster does not yield new data.
+
+## Versioning and stability
+
+All data endpoints are served under the `/v1` prefix (for example
+`GET /v1/assets/:id`). The path prefix is the compatibility contract: a client
+written against `/v1` should keep working, unmodified, for as long as `/v1` is
+served. `GET /version` returns the running server version so clients can log or
+report it, but clients should not need to branch on it.
+
+### What `/v1` covers
+
+The stability promise applies to every route under `/v1`, including its path and
+query parameters, response JSON shapes, field types and meanings, HTTP status
+codes, and the [error body](#error-responses) format and `error` codes.
+
+It does **not** cover operator-facing routes (`/metrics`, `/health`, `/`), the
+exact values of rate-limit budgets, the indexing interval, or anything marked as
+experimental or planned in these docs.
+
+### Changes that may ship without a version bump
+
+These are **additive** or behavioural changes that a well-behaved client already
+tolerates. Clients must ignore unknown fields and unknown enum values to benefit
+from them.
+
+- Adding new endpoints under `/v1`.
+- Adding new **optional** query parameters with a default that preserves the
+  current behaviour.
+- Adding new fields to response objects.
+- Adding new values to open-ended string enums (for example a new event type or
+  a new `error` code for a previously unhandled case).
+- Adding new response headers.
+- Changing the wording of human-readable `message` strings.
+- Changing ordering where the order is not documented as guaranteed.
+- Tuning operational limits (rate limits, timeouts, body size, poll interval)
+  and fixing bugs so behaviour matches the documentation.
+
+### Changes that require a new version
+
+These are **breaking** and will only ship under a new prefix (`/v2`):
+
+- Removing or renaming an endpoint, field, or query parameter.
+- Changing a field's type or encoding (for example turning a decimal string
+  such as `total_supply` into a number) or its units (for example cents to
+  dollars).
+- Making an optional parameter required, or changing a default in a way that
+  alters results.
+- Changing the status code or `error` code returned for an existing condition.
+- Changing the meaning of an existing field or the semantics of an endpoint.
+- Changing pagination, ETag, or error-body structure.
+
+### Deprecation policy
+
+- When `/v2` is introduced, `/v1` keeps running alongside it; the two are
+  served from the same process and index.
+- A deprecation is announced in these docs and the changelog before anything is
+  removed, and `/v1` remains available for **at least 6 months** after `/v2` is
+  generally available.
+- Individual `/v1` fields or endpoints may be marked deprecated in the docs and
+  the OpenAPI spec (`deprecated: true`) ahead of time, but are not removed from
+  `/v1` itself.
+- Security fixes may change behaviour without notice when there is no
+  compatible alternative; such changes will be called out in the changelog.
 
 ## Conventions
 
