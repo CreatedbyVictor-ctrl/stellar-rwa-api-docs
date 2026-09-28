@@ -15,3 +15,17 @@ out
 .idea
 .vscode/*
 !.vscode/extensions.json
+
+# Test snapshots and generated test artifacts
+**/__snapshots__/
+*.snap
+
+# Coverage and build artifacts
+coverage/
+*.lcov
+.nyc_output/
+*.tsbuildinfo
+*.log
+
+# Kiro agent working files
+.kiro/

@@ -40,7 +40,7 @@ the indexer derives this from the allowlist intersected with balances.
 **Example**
 
 ```bash
-curl $API_BASE_URL/assets/1/holders
+curl $API_BASE_URL/v1/assets/1/holders
 ```
 
 ```json
@@ -64,3 +64,10 @@ Holders are sorted by balance, largest first. `share_percent` is computed from
 `balance / total_supply` at index time, so it reflects the most recent 10-second
 refresh.
 </CalloutBox>
+
+## What to read next
+
+- [API · Assets](/docs/api/assets) — get the asset's `decimals` to interpret raw balances.
+- [API · Compliance](/docs/api/compliance) — understand which holders are currently permitted to transfer.
+- [Compliance Guide](/docs/compliance-guide) — why holders are derived from the compliance allowlist.
+- [Time & Ledgers](/docs/time-and-ledgers) — understand how balances may lag by up to 10 seconds.

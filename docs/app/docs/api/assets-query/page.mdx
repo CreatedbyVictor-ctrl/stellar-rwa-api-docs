@@ -22,3 +22,10 @@ curl "$API_BASE_URL/v1/assets?asset_type=real_estate&sort=valuation&order=asc"
 
 Invalid or unknown parameters return `400` with a body of the form
 `{"error": "invalid_parameter", "message": "..."}`.
+
+## What to read next
+
+- [API · Assets](/docs/api/assets) — full response schema and per-asset endpoints.
+- [API · Field Selection](/docs/api/field-selection) — combine `?fields=` with filter parameters.
+- [API · Error Bodies](/docs/api/errors) — details on the `400` error shape.
+- [Rate Limits & Caching](/docs/api/rate-limits) — use ETags to poll filtered lists efficiently.

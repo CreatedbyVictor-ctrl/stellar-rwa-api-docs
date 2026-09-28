@@ -158,3 +158,10 @@ const op = compliance.call(
   freezes every `US` holder's ability to transfer. Use deliberately.
 - **`remove` vs `suspend`:** `suspend` is reversible and keeps the audit record;
   `remove` erases it. Prefer `suspend` for temporary actions.
+
+## What to read next
+
+- [Compliance Guide](/docs/compliance-guide) — the conceptual model behind allowlists, expiry, and jurisdiction rules.
+- [Asset Token Contract](/docs/contracts/asset-token) — how `is_allowed` is called on every transfer and mint.
+- [API · Compliance](/docs/api/compliance) — read aggregate compliance stats over REST.
+- [Integration Guide](/docs/integration) — call `is_allowed` live before submitting a transfer.

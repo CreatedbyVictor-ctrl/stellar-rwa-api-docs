@@ -195,7 +195,9 @@ export async function transfer(
     fee: BASE_FEE, networkPassphrase: Networks.TESTNET,
   }).addOperation(op).setTimeout(60).build();
 
-  // Simulate + assemble to attach the Soroban footprint and resource fees.
+  // Simulate + assemble to attach the Soroban footprint (the set of ledger
+  // entries the transaction will read/write — required by the network to
+  // allocate resources) and resource fees.
   const sim = await server.simulateTransaction(built);
   if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
   const prepared = rpc.assembleTransaction(built, sim).build();
@@ -236,7 +238,8 @@ What the reference indexer does for each `simulateTransaction` read:
 
 - **Retried in place:** only transport errors (connection failures, dropped or unreadable responses)
   and JSON-RPC or simulation errors returned in a `2xx` response.
-- **Not retried:** XDR, strkey and JSON decode errors. These come from how the
+- **Not retried:** XDR (External Data Representation — the binary serialization
+  format Stellar uses for all on-chain data), strkey and JSON decode errors. These come from how the
   request was built or the response was parsed, so they fail the same way on
   every attempt. Other non-`2xx` HTTP statuses (for example `502`) are not
   retried in place either; the read fails and the refresh is retried on the
@@ -287,3 +290,10 @@ read from a node that is lagging behind.
 All Testnet contract ids are listed in [Getting Started](/docs/getting-started#deployed-contract-addresses-testnet).
 Asset-token contract ids are discovered from the registry's `get_all_assets` (or
 the API's `/assets`).
+
+## What to read next
+
+- [API Overview](/docs/api/overview) — the full REST surface: endpoints, caching, and error shapes.
+- [Architecture Overview](/docs/architecture) — understand when to use the API vs. direct Soroban RPC.
+- [Compliance Guide](/docs/compliance-guide) — why `is_allowed` must pass before a transfer succeeds.
+- [Rate Limits & Caching](/docs/api/rate-limits) — ETag conditional requests and backoff guidance.

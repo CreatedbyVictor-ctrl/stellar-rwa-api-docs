@@ -36,7 +36,7 @@ Returns an aggregate view of an asset's KYC allowlist. It deliberately exposes
 **Example**
 
 ```bash
-curl $API_BASE_URL/assets/1/compliance
+curl $API_BASE_URL/v1/assets/1/compliance
 ```
 
 ```json
@@ -79,3 +79,10 @@ permitted to transact. Do not treat `approved` as that number on its own.
 The `jurisdictions` breakdown reflects the `jurisdiction` field of each KYC record.
 Combined with the contract's `is_jurisdiction_blocked`, it helps issuers audit
 their geographic exposure. See the [Compliance Guide](/docs/compliance-guide#jurisdiction-restrictions).
+
+## What to read next
+
+- [Compliance Guide](/docs/compliance-guide) — the full on-chain compliance model: allowlists, expiry, jurisdictions.
+- [Compliance Contract](/docs/contracts/compliance) — `is_allowed`, `block_jurisdiction`, and the full function surface.
+- [Integration Guide](/docs/integration) — call `is_allowed` live to verify a transfer will succeed.
+- [API · Holders](/docs/api/holders) — see which addresses currently hold a positive balance.

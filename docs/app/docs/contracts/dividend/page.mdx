@@ -145,4 +145,12 @@ const claim = dividend.call(
 - **Escrow custody:** funds live in the dividend contract between creation and
   claim. The contract only pays out via `claim`; there is no admin withdrawal path.
 - **Payment-token decimals differ** from the asset token. Amounts here are in the
-  payment token's base units (7 for classic Stellar assets / SACs).
+  payment token's base units (7 for classic Stellar assets / SACs — Stellar Asset
+  Contracts, the Soroban-compatible wrappers for classic Stellar assets like USDC).
+
+## What to read next
+
+- [API · Dividends](/docs/api/dividends) — read distribution history over REST.
+- [Web App Guide](/docs/web-app) — create distributions and let holders claim through the UI.
+- [Asset Token Contract](/docs/contracts/asset-token) — balances the dividend contract reads at claim time.
+- [Integration Guide](/docs/integration) — call `claim` and `claimable` from TypeScript.

@@ -34,3 +34,10 @@ curl "$API_BASE_URL/events?limit=20"
 </ApiEndpoint>
 
 Each event includes the contract address, event name, ledger, timestamp (when available), and the raw payload emitted by the contract.
+
+## What to read next
+
+- [API Overview](/docs/api/overview) — conventions, caching, and the full endpoint list.
+- [Asset Token Contract](/docs/contracts/asset-token) — the event topics emitted by `transfer`, `mint`, and `burn`.
+- [Rate Limits & Caching](/docs/api/rate-limits) — ETag support on the events endpoint.
+- [Time & Ledgers](/docs/time-and-ledgers) — understand `ledger` values in event payloads.
