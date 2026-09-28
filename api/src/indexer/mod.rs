@@ -200,12 +200,13 @@ impl AppState {
         }
     }
 
-    /// Clone the current snapshot for read-only serving.
-    pub fn snapshot(&self) -> Snapshot {
-        let guard = self.inner.load();
-        // `Guard` derefs to `&Arc<Snapshot>` under `arc-swap` 1.x, so the
-        // snapshot lives one more deref down: `**guard` is the `Snapshot`.
-        (**guard).clone()
+    /// Shared handle to the current snapshot for read-only serving.
+    ///
+    /// This bumps a reference count instead of deep-cloning the snapshot.
+    /// The returned `Arc` is immutable and stays internally consistent even
+    /// if the indexer swaps in a newer snapshot while the caller holds it.
+    pub fn snapshot(&self) -> Arc<Snapshot> {
+        self.inner.load_full()
     }
 
     /// Last ledger the indexer successfully read. Used as the ETag seed for
@@ -216,6 +217,8 @@ impl AppState {
 
     fn replace(&self, mut next: Snapshot) {
         next.prune_stale_asset_maps();
+        crate::indexer_metrics::record_snapshot(&next);
+        crate::snapshot_bounds::record(&next);
         self.inner.store(Arc::new(next));
     }
 
@@ -726,6 +729,7 @@ impl Indexer {
 
             let backoff = match result {
                 Ok(count) => {
+                    crate::poll_status::record_success(self.state.last_indexed_ledger());
                     metrics::counter!("rwa_indexer_refresh_total", "outcome" => "success")
                         .increment(1);
                     tracing::info!(
@@ -736,9 +740,11 @@ impl Indexer {
                     POLL_INTERVAL
                 }
                 Err(e) => {
+                    let consecutive_failures = crate::poll_status::record_failure();
                     metrics::counter!("rwa_indexer_refresh_total", "outcome" => "failure")
                         .increment(1);
                     tracing::warn!(
+                        consecutive_failures,
                         error = %e,
                         elapsed_ms = elapsed.as_millis() as u64,
                         "index refresh failed; keeping last snapshot"
@@ -749,6 +755,14 @@ impl Indexer {
                         POLL_INTERVAL
                     }
                 }
+            };
+
+            // Honour `RWA_POLL_INTERVAL_SECS` (default `POLL_INTERVAL`); a
+            // server-advised Retry-After delay still takes precedence.
+            let backoff = if backoff == POLL_INTERVAL {
+                crate::config_env::poll_interval()
+            } else {
+                backoff
             };
 
             tokio::select! {

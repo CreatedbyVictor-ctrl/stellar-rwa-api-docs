@@ -1,4 +1,5 @@
 import { DOCS_VERSION, CONTRACT_VERSION, isVersionStale } from "@/lib/version";
+import { resolveDeployedVersion } from "@/lib/apiVersion";
 
 interface VersionBannerProps {
   /** Defaults to DOCS_VERSION; overridable for testing. */
@@ -9,7 +10,7 @@ interface VersionBannerProps {
 
 export function VersionBanner({
   docsVersion = DOCS_VERSION,
-  contractVersion = CONTRACT_VERSION,
+  contractVersion = resolveDeployedVersion(DOCS_VERSION, CONTRACT_VERSION),
 }: VersionBannerProps = {}) {
   if (!docsVersion) return null;
   if (!isVersionStale(docsVersion, contractVersion)) return null;

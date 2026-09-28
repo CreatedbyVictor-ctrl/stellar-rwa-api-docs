@@ -1,0 +1,21 @@
+export const metadata = {
+  title: "API · Request IDs & Logging",
+  description: "Correlate a response with server logs using the request id.",
+  canonical: "/docs/api/request-ids",
+};
+
+# Request IDs & logging
+
+Every response carries an `X-Request-Id` header. Send your own `X-Request-Id`
+(up to 64 characters of letters, digits, `-` and `_`) to have it reused.
+
+JSON error bodies include the same value as `request_id`:
+
+```json
+{ "error": "not_found", "message": "Asset 7 not found", "request_id": "3f9a1c0b7d2e4a86" }
+```
+
+The server logs one structured line per request inside a span carrying
+`request_id`, `method` and `path`, with `status`, `latency_ms`,
+`indexed_ledger` and `consecutive_failures`, so a report can be matched to the
+indexer state at that moment. Set `RUST_LOG` to control verbosity.

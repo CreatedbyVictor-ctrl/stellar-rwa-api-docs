@@ -19,6 +19,20 @@ export const NAV: NavSection[] = [
     ],
   },
   {
+    title: "Concepts",
+    items: [
+      { title: "Compliance Guide", href: "/docs/compliance-guide" },
+      { title: "Time & Ledgers", href: "/docs/time-and-ledgers" },
+    ],
+  },
+  {
+    title: "Guides",
+    items: [
+      { title: "Integration", href: "/docs/integration" },
+      { title: "Web App Guide", href: "/docs/web-app" },
+    ],
+  },
+  {
     title: "Contract Reference",
     items: [
       { title: "Asset Token", href: "/docs/contracts/asset-token" },
@@ -37,15 +51,7 @@ export const NAV: NavSection[] = [
       { title: "Dividends", href: "/docs/api/dividends" },
       { title: "Events", href: "/docs/api/events" },
       { title: "Rate Limits & Caching", href: "/docs/api/rate-limits" },
-    ],
-  },
-  {
-    title: "Guides",
-    items: [
-      { title: "Compliance Guide", href: "/docs/compliance-guide" },
-      { title: "Time & Ledgers", href: "/docs/time-and-ledgers" },
-      { title: "Web App Guide", href: "/docs/web-app" },
-      { title: "Integration", href: "/docs/integration" },
+      { title: "Changelog", href: "/docs/changelog" },
     ],
   },
 ];

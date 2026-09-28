@@ -129,6 +129,23 @@ the current ledger every time `is_allowed` runs. An approval that lapsed one sec
 ago fails the very next transfer — no cron, no lag.
 </CalloutBox>
 
+## Worked scenarios
+
+These examples show how the live `is_allowed` gate affects a transfer. A transfer
+checks both the sender and recipient, so the error identifies which side failed.
+
+| Scenario | What the issuer or integrator sees | Outcome and next step |
+|----------|------------------------------------|-----------------------|
+| **Unapproved recipient** | An address has no allowlist record, or its status is `Pending` or `Rejected`. `is_allowed(recipient)` returns `false`. | The transfer reverts with `RecipientNotCompliant (8)`. Complete verification, then approve the recipient with `add_to_allowlist`; retry only after the approval is in effect. |
+| **Expired approval** | The record still says `Approved`, but the current ledger has reached `expires_at`. | `is_allowed` returns `false`, and an outgoing transfer fails with `SenderNotCompliant (7)`; an incoming transfer fails with `RecipientNotCompliant (8)`. Re-verify the holder and issue a new approval with a future expiry. |
+| **Suspended holder** | The holder's record is retained for the audit trail but has status `Suspended`. | `is_allowed` returns `false`. The holder cannot send (`SenderNotCompliant (7)`) or receive (`RecipientNotCompliant (8)`) until the compliance admin resolves the review and approves them again. |
+| **Blocked jurisdiction** | The address has an otherwise valid approval, but its recorded jurisdiction is currently blocked. | The jurisdiction check makes `is_allowed` return `false` immediately. Transfers from that holder fail with `SenderNotCompliant (7)` and transfers to them fail with `RecipientNotCompliant (8)`. Review the restriction before unblocking the jurisdiction or changing an individual's record. |
+
+In all four cases, an off-chain status display is not a substitute for the
+contract check: use `is_allowed` for the asset's current compliance contract
+before submitting a transfer. The transaction itself remains authoritative and
+will revert if either party fails the gate.
+
 ## Best practices for issuers
 
 1. **Secure the compliance admin key.** It is the single most powerful key in the

@@ -5,9 +5,16 @@
 //! and serves the current in-memory snapshot over HTTP. It holds no secrets,
 //! signs nothing, and never mutates on-chain state.
 
+mod config_env;
 mod indexer;
+mod indexer_metrics;
 mod models;
+mod poll_status;
+mod request_id;
+mod snapshot_bounds;
 mod routes;
+mod shutdown;
+mod stale_guard;
 
 use std::net::SocketAddr;
 
@@ -18,6 +25,9 @@ use tokio::sync::watch;
 #[tokio::main]
 async fn main() {
     init_tracing();
+
+    // Validate every env var up front, naming each offending variable.
+    config_env::validate();
 
     let config = match Config::from_env() {
         Ok(c) => c,
@@ -45,9 +55,12 @@ async fn main() {
 
     // Spawn the indexer; it owns its own clone of the shared state.
     let indexer = Indexer::new(state.clone());
-    tokio::spawn(async move { indexer.run(shutdown_rx).await });
+    let drain_rx = shutdown_rx.clone();
+    let indexer_task = tokio::spawn(async move { indexer.run(shutdown_rx).await });
 
-    let app = routes::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
+    let app = routes::router(state.clone())
+        .layer(axum::middleware::from_fn_with_state(state, request_id::layer))
+        .layer(tower_http::trace::TraceLayer::new_for_http());
 
     let port: u16 = std::env::var("PORT")
         .ok()
@@ -64,16 +77,25 @@ async fn main() {
     };
     tracing::info!(%addr, "listening");
 
-    if let Err(e) = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
+    let limit = shutdown::timeout();
+    if let Err(e) = shutdown::bounded(
+        drain_rx,
+        limit,
+        async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_signal(shutdown_tx))
+            .await
+        },
     )
-    .with_graceful_shutdown(shutdown_signal(shutdown_tx))
     .await
     {
         tracing::error!(error = %e, "server error");
         std::process::exit(1);
     }
+    shutdown::join_indexer(indexer_task, limit).await;
     tracing::info!("shut down cleanly");
 }
 

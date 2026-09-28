@@ -53,7 +53,19 @@ body {
   @apply mt-8 text-lg font-semibold text-base-50;
   scroll-margin-top: 6rem;
 }
-.prose h4 { @apply mt-6 text-base font-semibold text-base-100; }
+.prose h4 { @apply mt-6 text-base font-semibold text-base-100; scroll-margin-top: 6rem; }
+/* Section anchor links: hidden until the heading is hovered or the link is
+   focused, so they stay reachable by keyboard. */
+.prose .heading-anchor {
+  @apply ml-2 font-normal text-base-200/50 no-underline opacity-0 transition-opacity hover:text-brand-400;
+}
+.prose :is(h2, h3, h4, h5, h6):hover .heading-anchor,
+.prose .heading-anchor:focus-visible {
+  @apply opacity-100;
+}
+.prose .heading-anchor:focus-visible {
+  @apply rounded-sm outline outline-2 outline-offset-2 outline-brand-400;
+}
 .prose p { @apply leading-7 text-base-200; }
 .prose a {
   @apply font-medium text-brand-400 underline decoration-brand-400/50 underline-offset-2 transition-colors hover:text-brand-300 hover:decoration-brand-300;

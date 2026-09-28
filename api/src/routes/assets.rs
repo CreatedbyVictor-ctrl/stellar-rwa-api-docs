@@ -70,7 +70,7 @@ pub async fn list(
     let limit = query.limit.unwrap_or(DEFAULT_PAGE_SIZE).min(MAX_PAGE_SIZE);
     let assets = snap
         .assets
-        .into_iter()
+        .iter()
         .filter(|a| {
             query
                 .asset_type
@@ -80,6 +80,7 @@ pub async fn list(
         .filter(|a| query.active.is_none_or(|active| a.active == active))
         .skip(offset)
         .take(limit)
+        .cloned()
         .collect::<Vec<_>>();
 
     let payload = if query.fields.is_some() {

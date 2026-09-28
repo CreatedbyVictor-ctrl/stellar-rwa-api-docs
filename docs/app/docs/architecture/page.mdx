@@ -66,6 +66,49 @@ If you need data fresher than ~10 seconds, simulate the relevant view call
 directly with the Stellar JS SDK — see the [Integration Guide](/docs/integration#reading-contracts-directly).
 </CalloutBox>
 
+## How the indexer rebuilds state
+
+The indexer does **not** replay contract events to derive state. On every cycle
+it re-reads the *current* contract state through simulated view calls and builds
+a brand-new snapshot from scratch.
+
+**The polling model**
+
+1. Every 10 seconds (`POLL_INTERVAL` in `api/src/indexer/mod.rs`) a background
+   task starts a refresh cycle.
+2. It calls `get_all_assets` on the `registry`, then for each asset reads
+   `get_metadata` on the `asset-token`, the allowlist and balances via the
+   `compliance` contract, and `get_distributions_for_asset` on the `dividend`
+   contract.
+3. The results are assembled into a new snapshot (assets, holders, compliance
+   summaries, dividends and `/stats`) and swapped in atomically. Readers see
+   either the old snapshot or the new one — never a half-built mix.
+4. Individual reads retry transient RPC errors in place with short backoff. If
+   the cycle still fails, the previous snapshot keeps being served and the next
+   attempt waits one poll interval (or the RPC's `Retry-After`, if it sent one).
+
+Because each cycle is a full re-read, there is no event cursor to fall behind and
+no replay after a restart: a freshly started API is empty until its first
+successful cycle, then fully current.
+
+**Freshness implications**
+
+- **Lag.** Snapshot data trails the ledger by up to one poll interval plus the
+  time the cycle takes. `last_indexed_ledger` and `last_updated` on
+  [`/stats`](/docs/api/overview) tell you which ledger and when.
+- **Dividends lag more.** Distribution lists are cached per asset for 60 seconds
+  inside the indexer, so a new or claimed distribution can take up to ~60 seconds
+  to appear.
+- **Partial staleness.** If a single asset's reads fail, that asset keeps its
+  previous data and carries an `index_error`, while the rest of the snapshot
+  updates normally. Treat an asset with `index_error` as possibly stale.
+- **HTTP caching.** Snapshot-backed responses carry
+  `Cache-Control: public, max-age=10` and an `ETag` derived from
+  `last_indexed_ledger`, so polling faster than every 10 seconds only returns
+  the same data (or a `304`). See [Rate Limits &amp; Caching](/docs/api/rate-limits).
+- **In-memory only.** Nothing is persisted; a restart discards the snapshot and
+  the indexer rebuilds it on the next cycle.
+
 ## Contracts on Stellar
 
 There are four Soroban contracts, each with a distinct responsibility:
