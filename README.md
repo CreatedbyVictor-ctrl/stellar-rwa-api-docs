@@ -109,15 +109,38 @@ the `NEXT_PUBLIC_SITE_URL` warning above.
 
 ### Deploying to Vercel
 
-The docs site lives in the `docs/` subdirectory. When importing this repo into
-Vercel:
+The docs site lives in the `docs/` subdirectory, not the repo root. The repo
+root holds the Rust API (`api/`) and has no `package.json`, so a Vercel project
+pointed at the root cannot detect Next.js and the build fails. Configure the
+project like this:
 
-- **Root Directory:** `docs`
-- **Framework Preset:** Next.js
-- Build command and output are auto-detected.
+| Setting | Value | Why |
+| --- | --- | --- |
+| Root Directory | `docs` | Where `package.json`, `next.config.mjs` and `vercel.json` live |
+| Framework Preset | Next.js | Pinned by `"framework": "nextjs"` in `docs/vercel.json` |
+| Install Command | `npm install` | Set in `docs/vercel.json` |
+| Build Command | `next build` | Set in `docs/vercel.json` (same as `npm run build`) |
+| Output Directory | leave default (`.next`) | Handled by the Next.js preset; not overridden |
+| Node.js Version | 20.x | Matches CI (`.github/workflows/docs.yml`); the repo has no `.nvmrc` or `engines` field, so set it in Project Settings |
 
-Set `NEXT_PUBLIC_API_BASE_URL` to your deployed API URL (defaults to
-`http://localhost:8080` for local development).
+`docs/vercel.json` is only read when the Root Directory is `docs`, so the
+install/build overrides above do not apply to a root-level project.
+
+Every push to a non-production branch and every pull request gets a Preview
+deployment; pushes to the Production Branch set in Vercel (`main` by default) deploy
+to Production.
+The `Docs` GitHub workflow runs `npm ci`, `npm run check:mdx-samples` and
+`npm run build` in `docs/` independently of Vercel.
+
+**Environment variables.** Set these per environment (Production / Preview)
+in Project Settings. See `docs/.env.example` and the
+[environment variable reference](#environment-variables) for defaults and details.
+
+- `NEXT_PUBLIC_API_BASE_URL` — your deployed API URL (defaults to
+  `http://localhost:8080` for local development).
+- `NEXT_PUBLIC_SITE_URL` — canonical site URL; production builds warn if it is
+  unset and fall back to `https://stellar-rwa-docs.vercel.app`.
+- `NEXT_PUBLIC_API_VERSION` — optional, version shown in the banner.
 
 ## Repository layout
 
