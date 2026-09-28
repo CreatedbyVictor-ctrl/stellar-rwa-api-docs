@@ -1,4 +1,44 @@
 //! HTTP routing and the shared API error type.
+//!
+//! # Multi-network design decision (issue #433)
+//!
+//! ## Context
+//! The question was raised whether a single deployment should serve multiple
+//! Stellar networks (e.g. Testnet + Mainnet) from one API process.
+//!
+//! ## Options considered
+//!
+//! **Option A — namespace routes under `/v1/networks/{network}/...`**
+//! Each network becomes a path segment: `/v1/networks/testnet/assets`,
+//! `/v1/networks/mainnet/assets`, etc. A single `AppState` map keyed by
+//! network name drives all reads.
+//!
+//! *Tradeoffs:*
+//! - Doubles URL length and breaks every existing client without a redirect.
+//! - Adds a required path parameter to all data routes, complicating the
+//!   common single-network case.
+//! - A shared state map grows with every additional network.
+//!
+//! **Option B — one `AppState`/`Indexer` pair per network**
+//! The router creates N `AppState` instances at startup (one per configured
+//! network) and dispatches by leading path segment or a request header.
+//! Each indexer task polls its own RPC endpoint independently.
+//!
+//! *Tradeoffs:*
+//! - Requires multiplying indexer tasks and state; memory grows linearly
+//!   with network count.
+//! - Failures are fully isolated: a broken Testnet node cannot degrade
+//!   Mainnet reads.
+//! - `AppState` and `Indexer` are already `Clone`-friendly, so Option B is
+//!   feasible without restructuring existing types.
+//!
+//! ## Decision: **Deferred — single-network is the v1 model**
+//! A single-network deployment is the supported model for v1. Multi-network
+//! support can be introduced as a breaking v2 change by nesting all data
+//! routes under `/v2/networks/{network}/`. Backwards compatibility is
+//! preserved by keeping `/v1` routes as-is; both versions can run in
+//! parallel during any migration window. When multi-network is needed,
+//! Option B is the preferred implementation path.
 
 pub mod assets;
 pub mod assets_query;
@@ -48,7 +88,18 @@ use crate::models::ApiErrorBody;
 /// Sustained requests-per-second allowed per client IP, with bursting.
 const RATE_LIMIT_PER_SECOND: u64 = 5;
 const RATE_LIMIT_BURST: u32 = 20;
+/// Global request timeout — acts as a hard ceiling for all routes including
+/// non-data routes (health, metrics, version). Individual data-route groups
+/// are given tighter per-route timeouts via `RWA_*_TIMEOUT_SECS` env vars.
 const REQUEST_TIMEOUT_SECS: u64 = 30;
+/// Per-route timeout defaults (overridable via env vars documented on
+/// `router_with_rate_limit`).
+const STATS_TIMEOUT_SECS: u64 = 10;
+const ASSETS_LIST_TIMEOUT_SECS: u64 = 30;
+const ASSET_DETAIL_TIMEOUT_SECS: u64 = 15;
+/// Timeout for aggregate endpoints (holders, compliance, dividends/distributions)
+/// which legitimately take longer as they fan out over many addresses.
+const AGGREGATE_TIMEOUT_SECS: u64 = 60;
 const MAX_BODY_BYTES: usize = 1_048_576;
 const DEFAULT_CORS_ORIGIN: &str = "http://localhost:3000";
 
@@ -57,6 +108,22 @@ fn env_value<T: std::str::FromStr>(name: &str, default: T) -> T {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
+}
+
+/// Read a per-route timeout from an env var, falling back to `default_secs`.
+///
+/// Used by [`router_with_rate_limit`] to apply individual timeouts to each
+/// route group. The following env vars are supported (all in seconds):
+///
+/// | Env var                      | Default | Route group                                       |
+/// |------------------------------|---------|---------------------------------------------------|
+/// | `RWA_STATS_TIMEOUT_SECS`     | 10      | `GET /v1/stats`, `GET /v1/events`                 |
+/// | `RWA_ASSETS_LIST_TIMEOUT_SECS` | 30    | `GET /v1/assets`                                  |
+/// | `RWA_ASSET_DETAIL_TIMEOUT_SECS` | 15   | `GET /v1/assets/:id`                              |
+/// | `RWA_AGGREGATE_TIMEOUT_SECS` | 60      | holders, compliance, dividends, distributions     |
+/// | `RWA_REQUEST_TIMEOUT_SECS`   | 30      | global ceiling (non-data routes + safety net)     |
+fn route_timeout(env_var: &str, default_secs: u64) -> Duration {
+    Duration::from_secs(env_value(env_var, default_secs))
 }
 
 fn rate_limit_period(per_second: u64) -> Duration {
@@ -101,6 +168,10 @@ pub fn router(state: AppState) -> Router {
 /// [`router`] with the rate limit given explicitly instead of read from the
 /// environment, so tests can pick limits without mutating process-wide env
 /// vars that concurrently running tests would also observe.
+///
+/// Per-route timeouts can be tuned via environment variables. See
+/// [`route_timeout`] for the full list. The global `RWA_REQUEST_TIMEOUT_SECS`
+/// (default 30 s) remains as a hard ceiling for all routes.
 pub(crate) fn router_with_rate_limit(state: AppState, per_second: u64, burst: u32) -> Router {
     let origins = std::env::var("RWA_CORS_ALLOWED_ORIGINS")
         .unwrap_or_else(|_| DEFAULT_CORS_ORIGIN.into())
@@ -129,11 +200,39 @@ pub(crate) fn router_with_rate_limit(state: AppState, per_second: u64, burst: u3
     //
     // All data routes are nested under `/v1` so future breaking changes can
     // be introduced as `/v2` without disturbing existing clients.
-    let data_routes = Router::new()
+    //
+    // Each route group is given its own per-route TimeoutLayer so that slow
+    // aggregate queries (holders/compliance/dividends) do not eat into the
+    // budget of lightweight stats calls. The global TimeoutLayer applied to
+    // the outer router acts as a hard ceiling for all routes.
+
+    // Stats and events — lightweight reads that should be fast.
+    let stats_routes = Router::new()
         .route("/stats", get(stats::get))
         .route("/events", get(events::list))
+        .layer(TimeoutLayer::new(route_timeout(
+            "RWA_STATS_TIMEOUT_SECS",
+            STATS_TIMEOUT_SECS,
+        )));
+
+    // Asset list — potentially larger payload but no per-address fan-out.
+    let assets_list_routes = Router::new()
         .route("/assets", get(assets_query::list))
+        .layer(TimeoutLayer::new(route_timeout(
+            "RWA_ASSETS_LIST_TIMEOUT_SECS",
+            ASSETS_LIST_TIMEOUT_SECS,
+        )));
+
+    // Asset detail — single-asset read.
+    let asset_detail_routes = Router::new()
         .route("/assets/:id", get(assets::detail))
+        .layer(TimeoutLayer::new(route_timeout(
+            "RWA_ASSET_DETAIL_TIMEOUT_SECS",
+            ASSET_DETAIL_TIMEOUT_SECS,
+        )));
+
+    // Aggregate endpoints — fan out over many addresses, legitimately slower.
+    let aggregate_routes = Router::new()
         .route("/assets/:id/holders", get(holders::list))
         .route("/assets/:id/compliance", get(compliance::summary))
         .route("/assets/:id/dividends", get(dividends::list))
@@ -145,6 +244,16 @@ pub(crate) fn router_with_rate_limit(state: AppState, per_second: u64, burst: u3
         )
         .route("/holders/:address/position", get(holder_position::get))
         .route("/compliance/:address", get(compliance::for_address))
+        .layer(TimeoutLayer::new(route_timeout(
+            "RWA_AGGREGATE_TIMEOUT_SECS",
+            AGGREGATE_TIMEOUT_SECS,
+        )));
+
+    let data_routes = Router::new()
+        .merge(stats_routes)
+        .merge(assets_list_routes)
+        .merge(asset_detail_routes)
+        .merge(aggregate_routes)
         .layer(middleware::from_fn(field_select::field_select))
         .layer(middleware::from_fn_with_state(state.clone(), cache_headers));
 
@@ -153,6 +262,7 @@ pub(crate) fn router_with_rate_limit(state: AppState, per_second: u64, burst: u3
         .route("/version", get(version))
         .route("/health", get(health))
         .route("/metrics", get(metrics))
+        .route("/poll-history", get(poll_history))
         .nest("/v1", data_routes)
         .with_state(state)
         .layer(middleware::from_fn(crate::stale_guard::stale_headers))
@@ -232,7 +342,8 @@ async fn index() -> Json<serde_json::Value> {
             "GET /v1/holders/:address/position",
             "GET /v1/compliance/:address",
             "GET /health",
-            "GET /metrics"
+            "GET /metrics",
+            "GET /poll-history"
         ],
         "docs": "https://github.com/your-org/stellar-rwa-api-docs"
     }))
@@ -309,6 +420,29 @@ async fn metrics(headers: HeaderMap, State(state): State<AppState>) -> Response 
         state.metrics.render(),
     )
         .into_response()
+}
+
+/// Operator endpoint: returns the bounded ring-buffer of the last
+/// [`crate::indexer::MAX_POLL_HISTORY`] indexer poll records as JSON.
+///
+/// Protected by the same bearer token as `/metrics` (`RWA_METRICS_TOKEN`).
+/// Returns `401 Unauthorized` when the token is configured but missing or
+/// wrong; when `RWA_METRICS_TOKEN` is not set, the endpoint is open.
+async fn poll_history(headers: HeaderMap, State(state): State<AppState>) -> Response {
+    let supplied = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let expected = std::env::var("RWA_METRICS_TOKEN").ok();
+    let authorized = expected
+        .as_deref()
+        .filter(|token| !token.is_empty())
+        .zip(supplied)
+        .is_some_and(|(expected, supplied)| expected == supplied);
+    if !authorized {
+        return (StatusCode::UNAUTHORIZED, "poll-history authentication required").into_response();
+    }
+    Json(state.poll_history_records()).into_response()
 }
 
 #[cfg(test)]

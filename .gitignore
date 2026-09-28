@@ -1,17 +1,36 @@
 # Rust
 /api/target
+api/target/
 
 # Node
 node_modules
 .next
 out
+docs/.next/
+docs/out/
+docs/node_modules/
 
 # Env
 .env
 .env*.local
+.env.local
 
 # OS / editor
 .DS_Store
 .idea
 .vscode/*
 !.vscode/extensions.json
+
+# Rust backup files
+**/*.rs.bk
+
+# Test snapshots
+**/__snapshots__/
+**/*.snap
+*.snap
+
+# Logs
+*.log
+
+# Temp directories
+tmp/

@@ -11,8 +11,51 @@
 //! cycle still fails, the polling loop logs it and waits for the next
 //! [`POLL_INTERVAL`] rather than panicking, so the API always keeps serving
 //! the last good snapshot.
+//!
+//! # Multi-network design decision (issue #433)
+//!
+//! ## Context
+//! The question was raised whether a single deployment should serve multiple
+//! Stellar networks (e.g. Testnet + Mainnet) from one API process.
+//!
+//! ## Options considered
+//!
+//! **Option A — namespace routes under `/v1/networks/{network}/...`**
+//! Each network becomes a path segment: `/v1/networks/testnet/assets`,
+//! `/v1/networks/mainnet/assets`, etc. A single `AppState` map keyed by
+//! network name drives all reads.
+//!
+//! *Tradeoffs:*
+//! - Doubles URL length and breaks every existing client without a redirect.
+//! - Adds a required path parameter to all data routes, making the common
+//!   single-network case noisier.
+//! - The shared state map grows with every additional network; one blocked
+//!   network's indexer can slow scrape of the others.
+//!
+//! **Option B — one `AppState`/`Indexer` pair per network**
+//! The router creates N `AppState` instances at startup (one per configured
+//! network) and dispatches by the leading path segment or a request header.
+//! Each indexer task polls its own RPC endpoint independently.
+//!
+//! *Tradeoffs:*
+//! - Requires multiplying indexer tasks and state at startup; memory and
+//!   goroutine count grow linearly with the number of networks.
+//! - Failures are fully isolated: a broken Testnet node cannot degrade
+//!   Mainnet reads.
+//! - `AppState` and `Indexer` are already `Clone`-friendly, so Option B is
+//!   feasible without restructuring the existing types.
+//!
+//! ## Decision: **Deferred — single-network is the v1 model**
+//! A single-network deployment is the supported model for v1. Multi-network
+//! support can be introduced as a breaking v2 change by nesting all data
+//! routes under `/v2/networks/{network}/`. Backwards compatibility is
+//! preserved by keeping `/v1` as-is and running both versions in parallel
+//! during any migration window.
+//!
+//! When multi-network is needed, Option B is the preferred implementation
+//! path because `AppState` and `Indexer` are already `Clone`-friendly.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -74,6 +117,63 @@ const SIM_FEE: u32 = 100;
 /// has no `From<u64>` impl) and so wouldn't slip through as a runtime
 /// hazard if a future change accidentally rebinds to a `u64` const.
 const SIM_SEQ_NUM: i64 = 0;
+
+/// Maximum number of poll records retained in [`PollHistory`].
+const MAX_POLL_HISTORY: usize = 50;
+
+/// Outcome of a single indexer poll cycle.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PollOutcome {
+    Success,
+    Failure,
+}
+
+/// A record of one indexer poll cycle, stored in [`PollHistory`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PollRecord {
+    /// When the poll started, in RFC 3339 format.
+    pub started_at: String,
+    /// How long the poll took, in milliseconds.
+    pub duration_ms: u64,
+    /// Whether this poll succeeded or failed.
+    pub outcome: PollOutcome,
+    /// Number of assets indexed (present on success).
+    pub assets_indexed: Option<usize>,
+    /// The latest ledger at the time of the poll (present on success).
+    pub ledger: Option<u32>,
+    /// Error message (present on failure).
+    pub error: Option<String>,
+}
+
+/// Bounded ring-buffer of the most recent poll records.
+///
+/// Held inside [`AppState`] so operator tooling (e.g. `GET /poll-history`)
+/// can read it without touching the snapshot.
+pub struct PollHistory {
+    records: VecDeque<PollRecord>,
+}
+
+impl PollHistory {
+    fn new() -> Self {
+        PollHistory {
+            records: VecDeque::with_capacity(MAX_POLL_HISTORY),
+        }
+    }
+
+    /// Append a record, dropping the oldest entry when the buffer is full.
+    pub fn push(&mut self, record: PollRecord) {
+        if self.records.len() >= MAX_POLL_HISTORY {
+            self.records.pop_back();
+        }
+        self.records.push_front(record);
+    }
+
+    /// Return all records, newest first.
+    pub fn history(&self) -> Vec<PollRecord> {
+        self.records.iter().cloned().collect()
+    }
+}
 
 /// Static configuration for a network's contracts and RPC endpoint.
 #[derive(Debug, Clone)]
@@ -189,6 +289,9 @@ pub struct AppState {
     inner: Arc<ArcSwap<Snapshot>>,
     pub config: Arc<Config>,
     pub metrics: PrometheusHandle,
+    /// Bounded ring-buffer of the most recent poll records. Shared between
+    /// the indexer writer and the `/poll-history` route reader.
+    pub poll_history: Arc<Mutex<PollHistory>>,
 }
 
 impl AppState {
@@ -197,6 +300,7 @@ impl AppState {
             inner: Arc::new(ArcSwap::from(Arc::new(Snapshot::default()))),
             config: Arc::new(config),
             metrics,
+            poll_history: Arc::new(Mutex::new(PollHistory::new())),
         }
     }
 
@@ -220,6 +324,21 @@ impl AppState {
         crate::indexer_metrics::record_snapshot(&next);
         crate::snapshot_bounds::record(&next);
         self.inner.store(Arc::new(next));
+    }
+
+    /// Append a [`PollRecord`] to the bounded poll history ring-buffer.
+    pub fn push_poll_record(&self, record: PollRecord) {
+        if let Ok(mut history) = self.poll_history.lock() {
+            history.push(record);
+        }
+    }
+
+    /// Return all poll records, newest first.
+    pub fn poll_history_records(&self) -> Vec<PollRecord> {
+        self.poll_history
+            .lock()
+            .map(|h| h.history())
+            .unwrap_or_default()
     }
 
     /// Test-only: build state pre-populated with `snapshot`.
@@ -249,6 +368,7 @@ impl AppState {
             inner: Arc::new(ArcSwap::from(Arc::new(Snapshot::default()))),
             config: Arc::new(config),
             metrics,
+            poll_history: Arc::new(Mutex::new(PollHistory::new())),
         }
     }
 
@@ -737,6 +857,14 @@ impl Indexer {
                         elapsed_ms = elapsed.as_millis() as u64,
                         "index refreshed"
                     );
+                    self.state.push_poll_record(PollRecord {
+                        started_at: chrono::Utc::now().to_rfc3339(),
+                        duration_ms: elapsed.as_millis() as u64,
+                        outcome: PollOutcome::Success,
+                        assets_indexed: Some(count),
+                        ledger: Some(self.state.last_indexed_ledger()),
+                        error: None,
+                    });
                     POLL_INTERVAL
                 }
                 Err(e) => {
@@ -749,6 +877,14 @@ impl Indexer {
                         elapsed_ms = elapsed.as_millis() as u64,
                         "index refresh failed; keeping last snapshot"
                     );
+                    self.state.push_poll_record(PollRecord {
+                        started_at: chrono::Utc::now().to_rfc3339(),
+                        duration_ms: elapsed.as_millis() as u64,
+                        outcome: PollOutcome::Failure,
+                        assets_indexed: None,
+                        ledger: None,
+                        error: Some(e.to_string()),
+                    });
                     if let IndexError::RateLimited { retry_after, .. } = &e {
                         retry_after.unwrap_or(POLL_INTERVAL)
                     } else {
@@ -1164,6 +1300,49 @@ fn record_asset_read_error(asset_id: u64, read: &'static str) {
         "read" => read,
     )
     .increment(1);
+}
+
+// ---------------------------------------------------------------------------
+// Startup contract-id probe (issue #432)
+// ---------------------------------------------------------------------------
+
+/// Probe the configured contract IDs at startup by simulating a `version`
+/// call on each. Returns a vec of human-readable warning strings — one per
+/// contract that failed to resolve. An empty return means all probes passed.
+///
+/// Startup continues regardless of the outcome: a transient RPC hiccup
+/// should not prevent the process from starting. The warnings are emitted
+/// via [`tracing::warn!`] in `main.rs` after this function returns.
+pub async fn probe_contract_ids(config: &Config) -> Vec<String> {
+    let rpc = Rpc::new(config.rpc_url.clone(), config.read_source.clone());
+    let mut warnings = Vec::new();
+
+    let probes = [
+        ("RWA_REGISTRY_ID", &config.registry_id),
+        ("RWA_DIVIDEND_ID", &config.dividend_id),
+    ];
+
+    for (env_var, contract_id) in probes {
+        match rpc.read(contract_id, "version", vec![]).await {
+            Ok(outcome) => {
+                // Accept any value — we only care that the contract is
+                // reachable. The ABI version check is the indexer's job.
+                tracing::debug!(
+                    env_var,
+                    contract_id,
+                    version = ?outcome.value,
+                    "contract id probe succeeded"
+                );
+            }
+            Err(e) => {
+                warnings.push(format!(
+                    "{env_var} ({contract_id}): does not resolve — {e}"
+                ));
+            }
+        }
+    }
+
+    warnings
 }
 
 #[cfg(test)]
