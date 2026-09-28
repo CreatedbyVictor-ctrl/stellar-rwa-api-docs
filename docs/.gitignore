@@ -1,10 +1,27 @@
-/node_modules
-/.next/
-/out/
-/build
-next-env.d.ts
+# Build output
+.next/
+out/
+build/
+
+# Dependencies
+node_modules/
+
+# Test snapshots and coverage
+__snapshots__/
+*.snap
+coverage/
+.nyc_output/
+
+# Env
 .env
 .env*.local
+
+# TypeScript
 *.tsbuildinfo
+next-env.d.ts
+
+# Vercel
+.vercel/
+
+# OS
 .DS_Store
-.vercel

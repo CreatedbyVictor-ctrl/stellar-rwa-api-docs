@@ -1,10 +1,22 @@
 # Rust
 /api/target
+**/*.rs.bk
 
 # Node
 node_modules
 .next
 out
+/.next/
+/out/
+/build
+*.tsbuildinfo
+next-env.d.ts
+
+# Test snapshots and coverage
+__snapshots__/
+*.snap
+coverage/
+.nyc_output/
 
 # Env
 .env
@@ -15,3 +27,11 @@ out
 .idea
 .vscode/*
 !.vscode/extensions.json
+
+# Vercel
+.vercel/
+
+# Package manager caches
+.npm/
+.yarn/cache
+.pnp.*
