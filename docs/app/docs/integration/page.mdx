@@ -6,6 +6,11 @@ export const metadata = {
 
 # Integration Guide
 
+Examples in this guide use Testnet endpoints, contract IDs, and passphrase.
+For the corresponding Mainnet configuration—including provider RPC URL, new
+contract IDs, and real XLM fee considerations—see
+[Mainnet integration](/docs/getting-started#mainnet-integration).
+
 Three ways to integrate with the platform, from easiest to most direct:
 
 1. **Query the REST API** — indexed, JSON, no XDR.
@@ -210,6 +215,72 @@ A `transfer` will revert with <code>SenderNotCompliant (7)</code> or
 <code>is_allowed</code> for both addresses before submitting to give users a clear
 error up front.
 </CalloutBox>
+
+## Retries, failover and rate limits
+
+Public Soroban RPC endpoints are shared infrastructure: expect occasional
+network errors, `503`s and `429`s. The reference API's indexer
+(`api/src/indexer/mod.rs`) handles this as described below; a client that calls
+RPC directly (as in the sections above) should follow the same pattern.
+
+### Retry guidance
+
+What the reference indexer does for each `simulateTransaction` read:
+
+| Setting | Value |
+| --- | --- |
+| Attempts per read (first try + retries) | 4 (`MAX_READ_ATTEMPTS`) |
+| Base delay | 150 ms, doubling per attempt |
+| Maximum delay | 2 s |
+| Jitter | Full jitter: a random delay in `[0, cap]` |
+
+- **Retried in place:** only transport errors (connection failures, dropped or unreadable responses)
+  and JSON-RPC or simulation errors returned in a `2xx` response.
+- **Not retried:** XDR, strkey and JSON decode errors. These come from how the
+  request was built or the response was parsed, so they fail the same way on
+  every attempt. Other non-`2xx` HTTP statuses (for example `502`) are not
+  retried in place either; the read fails and the refresh is retried on the
+  next cycle.
+- **Failed refresh:** if a read still fails, the whole refresh is abandoned,
+  the API keeps serving the last good snapshot, and the indexer tries again
+  after the 10 s poll interval.
+
+For your own client: retry only idempotent calls (`simulateTransaction`,
+`getLedgerEntries`, `getTransaction`), use capped exponential backoff with full
+jitter so clients don't retry in lockstep, and keep the retry budget well under
+your polling interval. Do not blindly re-send a `sendTransaction` after a
+timeout. Poll `getTransaction` with the hash first, because the transaction may
+already have been accepted.
+
+### Failover
+
+The reference API does **not** fail over between RPC endpoints. It reads a
+single `RWA_RPC_URL` (default `https://soroban-testnet.stellar.org`). If that
+endpoint is down, the indexer keeps serving the last good snapshot and
+`last_indexed_ledger` in `GET /v1/stats` stops advancing. Watch that value, or the
+`rwa_indexer_refresh_total{outcome="failure"}` metric, to detect an outage. To
+switch providers, change `RWA_RPC_URL` and restart. A non-testnet URL also
+requires `RWA_REGISTRY_ID` and `RWA_DIVIDEND_ID`.
+
+If your own client needs failover, keep an ordered list of RPC URLs for the
+**same network**. Move to the next URL only after its retry budget runs out,
+not on the first error. Compare `latestLedger` across providers so you don't
+read from a node that is lagging behind.
+
+### Rate-limit interaction
+
+- A `429 Too Many Requests` or `503 Service Unavailable` from RPC is **not**
+  retried in place. Fast retries would only add load to a node that is already
+  pushing back. The read fails, the refresh cycle ends, and the next cycle
+  waits for the `Retry-After` header (integer seconds). If that header is
+  missing or not an integer, it waits the normal 10 s poll interval instead.
+- Retries count against the provider's rate limit. With 4 attempts per read, a
+  single refresh can make up to 4× the normal number of requests during an
+  incident. Size your request rate with that in mind.
+- The REST API applies its own per-IP token-bucket limit to *your* client
+  (`RWA_RATE_LIMIT_PER_SECOND` / `RWA_RATE_LIMIT_BURST`). Handle its `429`
+  the same way and honour `Retry-After`. See
+  [Rate Limits & Caching](/docs/api/rate-limits).
 
 ## Contract addresses
 

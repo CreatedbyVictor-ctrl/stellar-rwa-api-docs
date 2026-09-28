@@ -6,88 +6,72 @@ export const metadata = {
 
 # Rate Limits & Caching
 
-<CalloutBox variant="note">
-ETag caching is active on the versioned <code>/v1</code> data routes. The
-rate-limit response headers and examples in the first section describe planned
-behavior; they are not the headers currently returned by the API.
-</CalloutBox>
+Rate limiting is keyed by client IP and uses a token bucket shared across API
+routes. Conditional requests are enabled on the `/v1` data routes.
 
 ## Rate limits
 
-Each IP address is allowed **300 requests per minute** (sliding window). This
-applies to all endpoints equally — there are no per-endpoint overrides.
-
-### Response headers
-
-Every response includes the following headers so clients can track their
-remaining budget without waiting for a `429`:
-
-| Header | Example | Meaning |
-|--------|---------|---------|
-| `X-RateLimit-Limit` | `300` | Maximum requests allowed per window |
-| `X-RateLimit-Remaining` | `247` | Requests remaining in the current window |
-| `X-RateLimit-Reset` | `1756472340` | Unix timestamp when the window resets (UTC) |
+The default sustained rate is **5 requests per second per client IP**, with a
+maximum burst of **20 requests**. Tokens refill at one every 200 ms; this is a
+token bucket, not a fixed one-minute window. The limit is shared across API routes
+and can be changed with `RWA_RATE_LIMIT_PER_SECOND` and `RWA_RATE_LIMIT_BURST`.
 
 ### When the limit is exceeded
 
-Once `X-RateLimit-Remaining` reaches `0`, the server responds with:
+When a request arrives before a token is available, the API responds with HTTP
+`429 Too Many Requests`. The default middleware response is plain text, not the
+API's JSON error format:
 
 ```
 HTTP/1.1 429 Too Many Requests
-Retry-After: 12
-X-RateLimit-Limit: 300
-X-RateLimit-Remaining: 0
-X-RateLimit-Reset: 1756472340
+Too Many Requests! Wait for <seconds>s
 ```
 
-```json
-{
-  "error": "rate_limited",
-  "message": "too many requests — retry after 12 seconds"
-}
-```
-
-The `Retry-After` value (in seconds) is the time until the window resets. Back
-off for at least that long before retrying.
+The number of seconds varies with the time until the next token is available.
+The API does not currently send
+`Retry-After` or `X-RateLimit-*` headers. On `429`, pause for at least the
+indicated number of seconds when present, with a minimum one-second delay.
+Otherwise, use exponential backoff with jitter (and cap the delay), and retry
+only idempotent requests.
 
 <CalloutBox variant="tip">
-For polling use cases, read `X-RateLimit-Remaining` before every request and add
-a short sleep when it drops below 10. The API refreshes its state every ~10 seconds,
-so polling faster than that does not give you fresher data anyway.
+For polling use cases, the indexer refreshes its state about every 10 seconds, so
+polling more frequently does not provide fresher data. Use a 10–15 second polling
+interval and back off promptly after a `429`.
 </CalloutBox>
 
 ## HTTP caching with ETags
 
-Every `/v1` data route returns an `ETag` derived from the last indexed ledger.
-For example, ledger `3514152` produces `"ledger-3514152"`. The indexer refreshes
-about every 10 seconds, so this tag changes when it advances to a new indexed
-ledger; requests against the same indexed ledger can reuse the existing response.
+Snapshot-backed `/v1` data endpoints return a strong `ETag` derived from the latest
+indexed ledger, along with `Cache-Control: public, max-age=10`. `/health` and other
+non-data routes do not return these cache headers.
 
 ### How it works
 
-1. Make a normal request — the response includes `ETag` and `Cache-Control`.
-2. On the next request, send that exact ETag value in `If-None-Match`.
-3. If the indexed ledger has not changed, the server returns `304 Not Modified`
-   with an empty body and the current cache headers.
-4. If the indexed ledger has advanced, the server returns `200 OK` with the
-   response body and a new `ETag`.
+1. Make a normal request — the response includes an `ETag` header.
+2. On the next request, send the value back in `If-None-Match`.
+3. If the snapshot has not changed, the server returns `304 Not Modified` with an
+   empty body, saving bandwidth. The request still counts toward the rate limit.
+4. If the snapshot has changed, the server returns `200 OK` with the new body and
+   a new `ETag`.
 
 ```bash
 # First request — capture the ETag
-curl -i $API_BASE_URL/v1/assets/1
+# API_BASE_URL includes /v1, for example http://localhost:8080/v1
+curl -i "$API_BASE_URL/assets/1"
 # HTTP/1.1 200 OK
-# Cache-Control: public, max-age=10
 # ETag: "ledger-3514152"
+# Cache-Control: public, max-age=10
 
 # Second request — send the ETag back
-curl -i -H 'If-None-Match: "ledger-3514152"' $API_BASE_URL/v1/assets/1
-# HTTP/1.1 304 Not Modified   ← empty body
+curl -i -H 'If-None-Match: "ledger-3514152"' "$API_BASE_URL/assets/1"
+# HTTP/1.1 304 Not Modified   (empty body)
 ```
 
 ### TypeScript helper
 
 ```ts
-const API = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080"}/v1`;
+const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/v1";
 
 const etagCache = new Map<string, { etag: string; data: unknown }>();
 
@@ -118,30 +102,29 @@ export async function fetchWithEtag<T>(path: string): Promise<T> {
 
 ### Which endpoints support ETags?
 
-All snapshot-backed `/v1` data routes support ETags. Root, `/version`,
-`/health`, and `/metrics` are outside these routes and do not use this caching
-middleware.
+All snapshot-backed `/v1` read endpoints support ETags. The `/health` endpoint
+does **not** return an `ETag` because liveness probes should always get a fresh
+response.
 
 | Endpoint | ETag |
 |----------|------|
-| `GET /v1/stats` | ✅ |
-| `GET /v1/events` | ✅ |
-| `GET /v1/assets` | ✅ |
-| `GET /v1/assets/:id` | ✅ |
-| `GET /v1/assets/:id/holders` | ✅ |
-| `GET /v1/assets/:id/compliance` | ✅ |
-| `GET /v1/assets/:id/dividends` | ✅ |
-| `GET /v1/assets/:id/distributions/:did` | ✅ |
-| `GET /v1/holders/:address` | ✅ |
-| `GET /v1/holders/:address/compliance` | ✅ |
-| `GET /v1/compliance/:address` | ✅ |
+| `GET /stats` | ✅ |
+| `GET /events` | ✅ |
+| `GET /assets` | ✅ |
+| `GET /assets/:id` | ✅ |
+| `GET /assets/:id/holders` | ✅ |
+| `GET /assets/:id/compliance` | ✅ |
+| `GET /assets/:id/dividends` | ✅ |
+| `GET /assets/:id/distributions/:did` | ✅ |
+| `GET /holders/:address` | ✅ |
+| `GET /holders/:address/compliance` | ✅ |
+| `GET /compliance/:address` | ✅ |
+| `GET /health` | ❌ |
 
 ## Cache-Control
 
-The API sets `Cache-Control: public, max-age=10` on `/v1` data-route responses.
-This allows shared and client caches to reuse a response for up to 10 seconds,
-matching the approximate index refresh interval. After that, send the stored
-ETag in `If-None-Match` to check whether the indexed ledger has advanced.
+The API sets `Cache-Control: public, max-age=10` on snapshot-backed responses,
+matching the indexer's approximately 10-second refresh interval.
 
 If you are fronting the API with a CDN, configure it to **forward** the
 `If-None-Match` / `ETag` headers so conditional requests reach the origin rather
@@ -154,8 +137,8 @@ than being absorbed by the CDN's own cache.
   interval is a good default.
 - **Use ETags for asset detail pages.** Asset metadata rarely changes. Send
   `If-None-Match` on every poll — most responses will be `304`.
-- **Watch `X-RateLimit-Remaining`.** Build in a backoff when the counter is low
-  rather than waiting for a `429`.
+- **Handle `429` responses.** Back off with jitter; the API does not expose a
+  remaining-request counter.
 - **Cache locally for read-heavy UIs.** If your frontend renders the same data
   across multiple components, fetch once and share the result rather than making
   one request per component.
