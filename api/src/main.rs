@@ -5,8 +5,11 @@
 //! and serves the current in-memory snapshot over HTTP. It holds no secrets,
 //! signs nothing, and never mutates on-chain state.
 
+mod config_env;
 mod indexer;
+mod indexer_metrics;
 mod models;
+mod snapshot_bounds;
 mod routes;
 
 use std::net::SocketAddr;
@@ -18,6 +21,9 @@ use tokio::sync::watch;
 #[tokio::main]
 async fn main() {
     init_tracing();
+
+    // Validate every env var up front, naming each offending variable.
+    config_env::validate();
 
     let config = match Config::from_env() {
         Ok(c) => c,

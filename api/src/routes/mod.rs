@@ -266,6 +266,7 @@ async fn metrics(headers: HeaderMap, State(state): State<AppState>) -> Response 
     if !authorized {
         return (StatusCode::UNAUTHORIZED, "metrics authentication required").into_response();
     }
+    crate::indexer_metrics::refresh_scrape_gauges();
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
         state.metrics.render(),
