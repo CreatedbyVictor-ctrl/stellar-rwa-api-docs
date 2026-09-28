@@ -286,6 +286,60 @@ docker run -p 8080:8080 --env-file .env stellar-rwa-api
 
 Then run the same curl commands from step 2 against `http://localhost:8080`.
 
+## Reading contract state without a wallet
+
+**Reads need no wallet, no secret key and no funds.** Every read is a
+*simulated* contract invocation: an unsigned transaction is sent to the Soroban
+RPC `simulateTransaction` method, which executes the call and returns the result
+without ever submitting it to the ledger. Nothing is signed, no fee is charged
+and no state changes.
+
+This is exactly how the API indexer works — it simulates view calls such as
+`get_all_assets`, `get_metadata` and `balance`, using `RWA_READ_SOURCE` only as
+the transaction's source address. That account is never asked to sign and
+never pays anything; it just needs to exist on the network.
+
+You have two wallet-free options:
+
+1. **The REST API** — the `curl` commands in the Quickstart above serve
+   an indexed snapshot of the same state.
+2. **Simulate directly against Soroban RPC** — no API server needed. Save this
+   as `read.ts` and run it with `npm install @stellar/stellar-sdk && npx tsx read.ts`:
+
+```ts
+import {
+  Account, BASE_FEE, Contract, Networks, TransactionBuilder, rpc, scValToNative,
+} from "@stellar/stellar-sdk";
+
+const server = new rpc.Server("https://soroban-testnet.stellar.org");
+const ASSET_TOKEN = "CBMCWLSQSWUTLUJFCNBHNBSXMUM3XU7NAQ5TSNERW4HA4ZZBYHLG4ECZ";
+
+// Any existing account works as the source. No secret key is used, and the
+// sequence number is irrelevant because the transaction is never submitted.
+const source = new Account("GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA", "0");
+
+const tx = new TransactionBuilder(source, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(new Contract(ASSET_TOKEN).call("get_metadata"))
+  .setTimeout(30)
+  .build();
+
+const sim = await server.simulateTransaction(tx);
+if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+console.log(scValToNative(sim.result!.retval)); // { name: "Manhattan Loft", symbol: "MLOFT", ... }
+```
+
+<CalloutBox variant="note" title="Reads vs. writes">
+A **read** is only simulated: unsigned, free, and it never changes state. A
+**write** (`transfer`, `mint`, allowlist changes, dividend claims) must be
+signed by the authorizing account — usually through Freighter — pays a network
+fee in XLM, and is submitted with `sendTransaction` to change on-chain state.
+Simulating a write only *previews* it; nothing happens until it is signed and
+submitted. See [Integration](/docs/integration).
+</CalloutBox>
+
 ## Network guide
 
 Everything is deployed on **Testnet**. The network passphrase is:
