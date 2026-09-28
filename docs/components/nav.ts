@@ -30,6 +30,7 @@ export const NAV: NavSection[] = [
     items: [
       { title: "Integration", href: "/docs/integration" },
       { title: "Web App Guide", href: "/docs/web-app" },
+      { title: "FAQ", href: "/docs/faq" },
     ],
   },
   {
