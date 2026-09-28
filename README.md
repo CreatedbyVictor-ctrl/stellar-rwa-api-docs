@@ -89,6 +89,24 @@ npm install
 npm run dev               # http://localhost:3000
 ```
 
+### Environment variables
+
+Copy `docs/.env.example` to `docs/.env.local` to override defaults. Every
+variable is optional; the site builds and runs with none set. `NEXT_PUBLIC_*`
+values are inlined at **build time**, so when self-hosting set them before
+`npm run build` — changing them later requires a rebuild.
+
+| Variable | Default | Effect | Read in |
+|---|---|---|---|
+| `NEXT_PUBLIC_SITE_URL` | `https://stellar-rwa-docs.vercel.app` | Canonical site URL used for `metadataBase`, `sitemap.xml` and `robots.txt`. Set it to your own domain when self-hosting; a production build warns if it is unset. | `docs/lib/site.ts` |
+| `NEXT_PUBLIC_API_VERSION` | `v1.0.0` | API version these docs describe; shown in the version banner. | `docs/lib/version.ts` |
+| `NEXT_PUBLIC_CONTRACT_VERSION` | value of `NEXT_PUBLIC_API_VERSION` | Version currently deployed. If newer than `NEXT_PUBLIC_API_VERSION`, a "docs may be out of date" banner is shown; unset or not a `vX.Y.Z` string hides it. | `docs/lib/version.ts`, `docs/lib/apiVersion.ts` |
+| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8080` | Base URL of your deployed API, referenced by the code samples on the API/integration pages for readers to copy. The site itself makes no API calls with it. | `docs/app/docs/**/page.mdx` (samples) |
+| `API_BASE_URL` | unset (script prints nothing) | Used only by `docs/scripts/fetch-api-version.mjs`, which prints the `release` from `GET <API_BASE_URL>/version` so it can feed `NEXT_PUBLIC_CONTRACT_VERSION`: `NEXT_PUBLIC_CONTRACT_VERSION=$(API_BASE_URL=https://host node scripts/fetch-api-version.mjs) npm run build`. | `docs/scripts/fetch-api-version.mjs` |
+
+`NODE_ENV` is set by Next.js itself (not by you); in `production` it enables
+the `NEXT_PUBLIC_SITE_URL` warning above.
+
 ### Deploying to Vercel
 
 The docs site lives in the `docs/` subdirectory. When importing this repo into
