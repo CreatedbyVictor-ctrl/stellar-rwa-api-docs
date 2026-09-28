@@ -216,6 +216,8 @@ impl AppState {
 
     fn replace(&self, mut next: Snapshot) {
         next.prune_stale_asset_maps();
+        crate::indexer_metrics::record_snapshot(&next);
+        crate::snapshot_bounds::record(&next);
         self.inner.store(Arc::new(next));
     }
 
@@ -752,6 +754,14 @@ impl Indexer {
                         POLL_INTERVAL
                     }
                 }
+            };
+
+            // Honour `RWA_POLL_INTERVAL_SECS` (default `POLL_INTERVAL`); a
+            // server-advised Retry-After delay still takes precedence.
+            let backoff = if backoff == POLL_INTERVAL {
+                crate::config_env::poll_interval()
+            } else {
+                backoff
             };
 
             tokio::select! {
