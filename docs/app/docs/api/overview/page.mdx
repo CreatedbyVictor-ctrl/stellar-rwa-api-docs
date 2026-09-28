@@ -21,7 +21,9 @@ An OpenAPI 3.0 specification is available at <code>/openapi.json</code> — use 
 A background task polls **Soroban RPC** every 10 seconds. On each tick it reads the
 current state of the four contracts by *simulating* view calls — `get_all_assets`
 on the registry, then per-asset `get_metadata`, `get_allowlist`, `balance` and
-`get_distributions_for_asset` — and rebuilds an in-memory snapshot.
+`get_distributions_for_asset` — and rebuilds an in-memory snapshot. For the full
+polling model and what it means for data freshness, see
+[How the indexer rebuilds state](/docs/architecture#how-the-indexer-rebuilds-state).
 
 <CalloutBox variant="note">
 State is kept **in memory** (no database in v1). If the RPC is briefly
