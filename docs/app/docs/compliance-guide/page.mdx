@@ -66,6 +66,33 @@ transfer(from, to, amount)
   └─ move balances + emit event
 ```
 
+The same gate as a sequence. The sender is checked first, so a transfer
+between two non-approved addresses fails with `SenderNotCompliant` and the
+recipient check never runs:
+
+```text
+Caller             Asset token                     Compliance contract
+  │                    │                                    │
+  │ transfer(from,     │                                    │
+  │   to, amount) ───▶ │                                    │
+  │                    │ from.require_auth(), assert !paused│
+  │                    │                                    │
+  │                    │ is_allowed(from) ────────────────▶ │
+  │                    │ ◀──────────────────── true | false │
+  │                    │                                    │
+  │                    ├─ false ─▶ revert SenderNotCompliant (7)
+  │                    │           (no balance change, no event)
+  │                    │                                    │
+  │                    │ is_allowed(to) ──────────────────▶ │
+  │                    │ ◀──────────────────── true | false │
+  │                    │                                    │
+  │                    ├─ false ─▶ revert RecipientNotCompliant (8)
+  │                    │           (no balance change, no event)
+  │                    │                                    │
+  │                    │ both true: move balances,          │
+  │ ◀──────── ok ───── │ emit transfer event                │
+```
+
 If either `is_allowed` returns `false`, the transaction **reverts** — no balance
 moves, no event is emitted, the transfer simply cannot happen. The same check gates
 `mint` on the recipient, so tokens can never be minted into a non-approved wallet
