@@ -9,6 +9,7 @@ export interface SearchResult {
 
 const PAGES = [
   { title: "Getting Started", href: "/docs/getting-started", section: "Introduction" },
+  { title: "Security Considerations", href: "/docs/security-considerations", section: "Guides" },
   { title: "Asset Token", href: "/docs/contracts/asset-token", section: "Contract Reference" },
   { title: "Compliance", href: "/docs/contracts/compliance", section: "Contract Reference" },
   { title: "Registry", href: "/docs/contracts/registry", section: "Contract Reference" },
