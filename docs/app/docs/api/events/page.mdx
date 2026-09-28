@@ -34,3 +34,34 @@ curl "$API_BASE_URL/events?limit=20"
 </ApiEndpoint>
 
 Each event includes the contract address, event name, ledger, timestamp (when available), and the raw payload emitted by the contract.
+
+**Response schema:**
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | number | Sequential event ID |
+| `contract` | string | Address of the contract emitting the event |
+| `event_type` | string | Event name (e.g. `Transfer`, `Mint`, `Burn`, `Valuation`, `created`, `claim`) |
+| `ledger` | number | Ledger sequence number where the event was recorded |
+| `timestamp` | string or null | ISO 8601 timestamp of ledger close |
+| `data` | object | Event-specific data payload |
+
+**Event payload amount units:**
+
+Amounts inside `data` depend on the contract and event type, in accordance with the contracts specification:
+
+| Event type | Amount field | Unit / Base | Conversion |
+|---|---|---|---|
+| `Transfer`, `Mint`, `Burn` | `data.amount` | Asset token base units (`i128` string) | `Number(BigInt(data.amount)) / 10 ** token.decimals` |
+| `Valuation` | `data.new_valuation` | USD cents (`i128` string) | `Number(BigInt(data.new_valuation)) / 100` |
+| Dividend `created` | `data.total_amount` | Payment token base units (`i128` string) | `Number(BigInt(data.total_amount)) / 10 ** payment_token.decimals` |
+| Dividend `claim` | `data.amount` | Payment token base units (`i128` string) | `Number(BigInt(data.amount)) / 10 ** payment_token.decimals` |
+
+<CalloutBox variant="tip" title="Event amount conversion example">
+```typescript
+// For a Transfer event with amount = "100" and token decimals = 2:
+const rawAmount = BigInt(event.data.amount);
+const displayAmount = Number(rawAmount) / (10 ** 2);
+// => 1.00 token
+```
+</CalloutBox>

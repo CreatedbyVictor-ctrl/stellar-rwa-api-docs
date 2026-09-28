@@ -79,3 +79,46 @@ permitted to transact. Do not treat `approved` as that number on its own.
 The `jurisdictions` breakdown reflects the `jurisdiction` field of each KYC record.
 Combined with the contract's `is_jurisdiction_blocked`, it helps issuers audit
 their geographic exposure. See the [Compliance Guide](/docs/compliance-guide#jurisdiction-restrictions).
+
+## Address compliance
+
+<ApiEndpoint method="GET" path="/compliance/:address" description="Compliance status and balance for a single address across all held assets." />
+
+Returns the compliance authorization and token balance for an address across all assets it holds.
+
+```bash
+curl "$API_BASE_URL/compliance/GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA"
+```
+
+```json
+[
+  {
+    "address": "GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA",
+    "asset_id": 1,
+    "asset_name": "Manhattan Loft",
+    "symbol": "MLOFT",
+    "balance": "1000000",
+    "status": "approved",
+    "allowed": true
+  }
+]
+```
+
+**Response schema** (per record):
+
+| Field | Type | Description |
+|---|---|---|
+| `address` | string | Stellar account address |
+| `asset_id` | number | Registry asset id |
+| `asset_name` | string | Name of the asset |
+| `symbol` | string | Token symbol |
+| `balance` | string | Token balance in **base units** (`i128` string in the asset token's `decimals` base). Divide by `10 ** decimals` to obtain human-readable units. |
+| `status` | string | Stored KYC status (e.g. `approved`, `pending`) |
+| `allowed` | boolean | Current compliance authorization flag (`true` if permitted to transact) |
+
+<CalloutBox variant="tip" title="Balance conversion">
+```typescript
+// Balance is in base units; divide by 10 ** decimals (found in the asset's metadata):
+const displayBalance = Number(BigInt(record.balance)) / (10 ** decimals);
+```
+</CalloutBox>

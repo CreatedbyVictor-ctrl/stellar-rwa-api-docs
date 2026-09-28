@@ -34,8 +34,8 @@ the indexer derives this from the allowlist intersected with balances.
 | Field | Type | Notes |
 |-------|------|-------|
 | `address` | string | Holder account |
-| `balance` | string | Base units (`i128`) |
-| `share_percent` | number | Percent of total supply, 0–100 (2 dp) |
+| `balance` | string | Balance in **base units** (`i128` string in the asset token's `decimals` base). Divide by `10 ** decimals` (from the asset's metadata) to get the display balance. |
+| `share_percent` | number | Share of total token supply, 0–100 with 2 decimal places (`balance / total_supply * 100`). |
 
 **Example**
 
@@ -58,6 +58,17 @@ curl $API_BASE_URL/assets/1/holders
 Returns `404` with `{ "error": "not_found", … }` when the asset id is unknown. An
 asset with holders but none currently holding a positive balance returns an empty
 array `[]`.
+
+<CalloutBox variant="tip" title="Balance conversion example">
+Holder balances are raw integers on-chain. To format a balance for end users, query the asset's `decimals` value and scale the integer:
+
+```typescript
+// Given holder.balance = "1000000" and asset.decimals = 2:
+const rawBalance = BigInt(holder.balance);
+const displayBalance = Number(rawBalance) / (10 ** asset.decimals);
+// => 10,000.00 tokens
+```
+</CalloutBox>
 
 <CalloutBox variant="note">
 Holders are sorted by balance, largest first. `share_percent` is computed from
