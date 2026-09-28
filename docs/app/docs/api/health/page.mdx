@@ -1,0 +1,38 @@
+export const metadata = {
+  title: "API · Health & Indexer Lag",
+  description: "How GET /health reports the last successful poll, ledger lag and staleness.",
+  canonical: "/docs/api/health",
+};
+
+# Health & indexer lag
+
+`GET /health` returns `200` with `"status": "ok"` while the indexer is polling
+normally, and `503` with `"status": "degraded"` when it has stalled.
+
+| Field | Meaning |
+| --- | --- |
+| `snapshot_age_seconds` | Age of the served snapshot |
+| `last_poll_at` | Time of the last successful poll (RFC 3339) |
+| `last_poll_age_seconds` | Seconds since the last successful poll |
+| `last_indexed_ledger` | Ledger reached by the last successful poll |
+| `ledger_lag` | Estimated ledgers closed since that poll (about 5 seconds each) |
+| `max_age_seconds` | Stall threshold |
+
+## Threshold
+
+The indexer is reported unhealthy when the last successful poll is older than
+`max_age_seconds`. The default is three poll intervals (30 seconds). Override it
+with the `RWA_HEALTH_MAX_POLL_AGE_SECS` environment variable.
+
+## Staleness during an RPC outage
+
+The indexer counts consecutive failed polls and reports the count as
+`consecutive_failures` in `/health`. While polls are failing, or the last
+successful poll is older than the threshold, every response carries:
+
+- `X-Data-Stale: true`
+- `X-Data-Age-Seconds`: seconds since the last successful poll
+- `X-Indexer-Consecutive-Failures`: current failure streak
+
+The previous snapshot keeps being served. When a poll succeeds again, the
+headers disappear and the recovery is logged.

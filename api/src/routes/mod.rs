@@ -19,6 +19,14 @@ mod field_select_tests;
 #[cfg(test)]
 mod holder_position_tests;
 
+#[cfg(test)]
+mod cache_conditional_tests;
+
+#[cfg(test)]
+mod rate_limit_boundary_tests;
+
+pub(crate) mod error_body;
+
 use std::{sync::Arc, time::Duration};
 
 use axum::{
@@ -51,6 +59,14 @@ fn env_value<T: std::str::FromStr>(name: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
+fn rate_limit_period(per_second: u64) -> Duration {
+    if per_second == 0 {
+        Duration::ZERO
+    } else {
+        Duration::from_secs(1).div_f64(per_second as f64)
+    }
+}
+
 /// Errors surfaced to API clients as a JSON body with an appropriate status.
 #[derive(Debug)]
 pub enum ApiError {
@@ -75,6 +91,17 @@ impl IntoResponse for ApiError {
 
 /// Build the application router with CORS enabled for the docs/web app.
 pub fn router(state: AppState) -> Router {
+    router_with_rate_limit(
+        state,
+        env_value("RWA_RATE_LIMIT_PER_SECOND", RATE_LIMIT_PER_SECOND),
+        env_value("RWA_RATE_LIMIT_BURST", RATE_LIMIT_BURST),
+    )
+}
+
+/// [`router`] with the rate limit given explicitly instead of read from the
+/// environment, so tests can pick limits without mutating process-wide env
+/// vars that concurrently running tests would also observe.
+pub(crate) fn router_with_rate_limit(state: AppState, per_second: u64, burst: u32) -> Router {
     let origins = std::env::var("RWA_CORS_ALLOWED_ORIGINS")
         .unwrap_or_else(|_| DEFAULT_CORS_ORIGIN.into())
         .split(',')
@@ -86,15 +113,12 @@ pub fn router(state: AppState) -> Router {
         .allow_methods([Method::GET])
         .allow_headers([header::CONTENT_TYPE]);
 
-    let per_second = env_value("RWA_RATE_LIMIT_PER_SECOND", RATE_LIMIT_PER_SECOND);
-    let burst = env_value("RWA_RATE_LIMIT_BURST", RATE_LIMIT_BURST);
-
     // Each request clones the in-memory snapshot, so cap how fast a single
     // client can drive that cost. Checked before `cache_headers`, which
     // itself touches shared state, so a throttled request stays cheap.
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(per_second)
+            .period(rate_limit_period(per_second))
             .burst_size(burst)
             .finish()
             .expect("rate limit config: period and burst size are non-zero"),
@@ -131,6 +155,7 @@ pub fn router(state: AppState) -> Router {
         .route("/metrics", get(metrics))
         .nest("/v1", data_routes)
         .with_state(state)
+        .layer(middleware::from_fn(crate::stale_guard::stale_headers))
         .layer(TimeoutLayer::new(Duration::from_secs(env_value(
             "RWA_REQUEST_TIMEOUT_SECS",
             REQUEST_TIMEOUT_SECS,
@@ -142,6 +167,7 @@ pub fn router(state: AppState) -> Router {
         .layer(GovernorLayer {
             config: governor_conf,
         })
+        .layer(middleware::from_fn(error_body::normalize))
         .layer(cors)
 }
 
@@ -236,8 +262,10 @@ async fn health(State(state): State<AppState>) -> Response {
             .num_seconds()
             .max(0)
     });
-    let max_age = (POLL_INTERVAL * 3).as_secs() as i64;
-    let healthy = age.is_some_and(|seconds| seconds <= max_age);
+    let max_age = crate::poll_status::max_poll_age(POLL_INTERVAL);
+    let poll_age = crate::poll_status::last_poll_age_seconds();
+    let healthy = age.is_some_and(|seconds| seconds <= max_age)
+        && poll_age.is_some_and(|seconds| seconds <= max_age);
     let status = if healthy {
         StatusCode::OK
     } else {
@@ -249,6 +277,11 @@ async fn health(State(state): State<AppState>) -> Response {
             "status": if healthy { "ok" } else { "degraded" },
             "snapshot_age_seconds": age,
             "max_age_seconds": max_age,
+            "consecutive_failures": crate::poll_status::consecutive_failures(),
+            "last_poll_at": crate::poll_status::last_poll_at(),
+            "last_poll_age_seconds": poll_age,
+            "last_indexed_ledger": crate::poll_status::last_ledger(),
+            "ledger_lag": crate::poll_status::estimated_ledger_lag(),
         })),
     )
         .into_response()
@@ -270,6 +303,7 @@ async fn metrics(headers: HeaderMap, State(state): State<AppState>) -> Response 
     if !authorized {
         return (StatusCode::UNAUTHORIZED, "metrics authentication required").into_response();
     }
+    crate::indexer_metrics::refresh_scrape_gauges();
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
         state.metrics.render(),
@@ -291,7 +325,16 @@ mod tests {
 
     use crate::indexer::AppState;
 
-    use super::router;
+    use super::{rate_limit_period, router};
+
+    #[test]
+    fn rate_limit_setting_is_requests_per_second() {
+        assert_eq!(
+            rate_limit_period(5),
+            std::time::Duration::from_millis(200)
+        );
+        assert_eq!(rate_limit_period(0), std::time::Duration::ZERO);
+    }
 
     async fn assert_json_content_type(app: Router, uri: &str, status: StatusCode) {
         // This is the only test that exercises the full `router()`, rate

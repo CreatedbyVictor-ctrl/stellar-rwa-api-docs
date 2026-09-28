@@ -108,12 +108,15 @@ pub async fn list(
         Ok(o) => o,
         Err(message) => return bad_request(message),
     };
-    let mut assets = state
-        .snapshot()
+    // The snapshot is shared behind an `Arc`, so filter by reference and clone
+    // only the assets that survive the filters.
+    let snapshot = state.snapshot();
+    let mut assets = snapshot
         .assets
-        .into_iter()
+        .iter()
         .filter(|a| options.asset_type.as_deref().is_none_or(|t| a.asset_type == t))
         .filter(|a| options.active.is_none_or(|active| a.active == active))
+        .cloned()
         .collect::<Vec<_>>();
     if let Some(descending) = options.sort_valuation {
         assets.sort_by(|a, b| {
