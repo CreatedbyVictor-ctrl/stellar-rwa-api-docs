@@ -16,6 +16,14 @@ It has three parts, each in its own repository:
 - **API** — a Rust/Axum service that indexes all tokenized-asset activity and serves it over REST.
 - **Web app** — a Next.js front-end for issuers and investors.
 
+<CalloutBox variant="warning" title="Project maturity">
+The toolkit is early-stage (v0.1.0) and **deployed on Stellar Testnet only** —
+there is no mainnet deployment. The contracts and API have **not been externally
+audited**. Build and experiment against Testnet, but do not use this code to
+custody real value until it has been independently audited and reviewed for
+securities compliance.
+</CalloutBox>
+
 ## What "tokenizing a real-world asset" means
 
 A real-world asset — say a $5,000,000 Manhattan loft — is represented on-chain as
