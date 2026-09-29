@@ -1,11 +1,11 @@
 export const metadata = {
-  title: "Architecture Overview",
-  description: "How the three Stellar RWA repositories fit together: contracts, API, and web app.",
+  title: "Architecture overview",
+  description: "How the four Soroban contracts fit together, and how the three repositories sit around them.",
   canonical: "/docs/architecture",
   lastReviewed: "2026-09-28",
 };
 
-# Architecture Overview
+# Architecture overview
 
 <LastReviewed date={metadata.lastReviewed} />
 
@@ -36,8 +36,6 @@ layer; they interact only through well-defined interfaces.
                          └───────────────────────────────────────────┘
 ```
 
-## Repository ownership
-
 | Repository | Language / stack | Owns | Open to contributors? |
 |---|---|---|---|
 | [`stellar-rwa-contracts`](https://github.com/RWA-ToolKit/stellar-rwa-contracts) | Rust · Soroban SDK | The four on-chain programs; all business logic and compliance rules | Maintainer-only |
@@ -52,8 +50,8 @@ layer; they interact only through well-defined interfaces.
 1. A user opens the web app and connects Freighter.
 2. The web app builds a Soroban transaction and asks Freighter to sign it.
 3. The signed transaction is submitted to Soroban RPC and lands on the ledger.
-4. The contract executes — e.g., an `asset-token` transfer triggers a
-   cross-contract `is_allowed` check in the `compliance` contract.
+4. The contract executes — for example, an `asset-token` transfer triggers
+   cross-contract `is_allowed` checks in the `compliance` contract.
 
 **Reads (chain → API → web app)**
 
@@ -108,27 +106,9 @@ successful cycle, then fully current.
 - **HTTP caching.** Snapshot-backed responses carry
   `Cache-Control: public, max-age=10` and an `ETag` derived from
   `last_indexed_ledger`, so polling faster than every 10 seconds only returns
-  the same data (or a `304`). See [Rate Limits &amp; Caching](/docs/api/rate-limits).
+  the same data (or a `304`). See [Rate Limits & Caching](/docs/api/rate-limits).
 - **In-memory only.** Nothing is persisted; a restart discards the snapshot and
   the indexer rebuilds it on the next cycle.
-
-## Contracts on Stellar
-
-There are four Soroban contracts, each with a distinct responsibility:
-
-| Contract | Responsibility |
-|---|---|
-| `asset-token` | Fungible token (SEP-41) with compliance gating. One instance per RWA. |
-| `compliance` | Per-asset allowlist, KYC records, jurisdiction rules, expiry. |
-| `registry` | Global index of all tokenized assets on the platform. |
-| `dividend` | Escrows and distributes payment-token dividends to token holders. |
-
-`asset-token` and `compliance` are **always deployed as a pair** — each asset-token
-holds the address of its compliance contract and calls `is_allowed` on every
-transfer. The `registry` and `dividend` contracts are **platform-wide singletons**.
-
-See the [Contract Reference](/docs/contracts/asset-token) for full method
-signatures.
 
 ## What the API does and does not do
 
