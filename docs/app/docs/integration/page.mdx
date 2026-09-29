@@ -121,6 +121,81 @@ Always parse `valuation_cents`, `total_supply`, `balance`, and `total_amount` wi
 <code>BigInt(...)</code> — they are decimal strings to preserve `i128` precision.
 </CalloutBox>
 
+## Decimal conversions
+
+Every amount on this platform is an integer in a token's own base units — there
+is no floating point anywhere in the contracts. Two different tokens are in play
+for dividend distributions, and they have **independent** decimal counts:
+
+| Token | Decimals source | Example |
+|-------|----------------|---------|
+| Asset token (e.g. MLOFT) | `asset.decimals` from the API response | `7` for MLOFT |
+| Payment token (e.g. USDC SAC) | The payment token's own metadata | `7` for classic Stellar SACs — but this is coincidental and must not be assumed |
+
+See the [Asset Token contract](/docs/contracts/asset-token) for how asset amounts
+are stored, and the [Dividend contract](/docs/contracts/dividend) for the note on
+payment-token decimals.
+
+### Correct conversion
+
+Always read each token's decimals independently. Never assume two tokens share
+the same scale.
+
+```ts
+// asset.decimals comes from GET /v1/assets/:id
+// paymentDecimals must be fetched from the payment token itself
+function toDisplay(raw: bigint, decimals: number): string {
+  const base = 10n ** BigInt(decimals);
+  const whole = raw / base;
+  const frac = raw % base;
+  return `${whole}.${frac.toString().padStart(decimals, "0")}`;
+}
+
+// Asset token: 50_000_0000000 raw units @ 7 decimals → "5000000.0000000" MLOFT
+const assetRaw = 50_000_0000000n;
+const assetDecimals = 7; // from asset.decimals
+console.log(toDisplay(assetRaw, assetDecimals)); // "5000000.0000000"
+
+// Payment token: 1_000_0000000 raw units @ 7 decimals → "1000.0000000" USDC
+// (decimals fetched from the payment token's own metadata, not from the asset)
+const paymentRaw = 1_000_0000000n;
+const paymentDecimals = 7; // from payment token metadata — confirmed independently
+console.log(toDisplay(paymentRaw, paymentDecimals)); // "1000.0000000"
+```
+
+### Common mistake — using the wrong token's decimals
+
+Both tokens happen to use 7 decimals in the sample deployment, so the bug is
+silent until a payment token with a different scale is used (e.g. a custom SAC
+with 2 decimals).
+
+```ts
+// ✗ Wrong: asset.decimals used to scale a payment-token amount
+function displayPaymentWrong(paymentRaw: bigint, asset: { decimals: number }): string {
+  // BUG: asset.decimals is the asset token's scale, not the payment token's.
+  // If the payment token has 2 decimals and asset has 7, this displays
+  // an amount 100,000× too small.
+  const base = 10n ** BigInt(asset.decimals);
+  return (Number(paymentRaw) / Number(base)).toLocaleString();
+}
+
+// ✓ Correct: fetch payment-token decimals separately
+async function displayPaymentCorrect(
+  paymentRaw: bigint,
+  paymentTokenDecimals: number, // retrieved from payment token metadata
+): Promise<string> {
+  const base = 10n ** BigInt(paymentTokenDecimals);
+  return (Number(paymentRaw) / Number(base)).toLocaleString();
+}
+```
+
+<CalloutBox variant="warning" title="Never assume shared decimals">
+The asset token and the payment token are independent contracts. The fact that
+classic Stellar SACs use 7 decimals is a coincidence of the sample deployment.
+Always fetch each token's decimals from its own source. Mixing them produces
+display values that are off by orders of magnitude.
+</CalloutBox>
+
 ## Reading contracts directly
 
 To read live state without the API, simulate a view call with the Stellar JS SDK.
