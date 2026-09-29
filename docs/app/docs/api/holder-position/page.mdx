@@ -36,6 +36,24 @@ curl "$API_BASE_URL/v1/holders/$ADDRESS/position"
 }
 ```
 
+**Response schema:**
+
+| Field | Type | Unit / Description |
+|---|---|---|
+| `address` | string | Stellar account address |
+| `asset_count` | number | Count of assets held with a positive balance |
+| `total_value_usd` | number | Total estimated value across all held positions in **USD dollars** (`f64`) |
+| `positions` | array | Array of asset position objects |
+| `positions[].asset_id` | number | Registry asset id |
+| `positions[].asset_name` | string | Name of the asset |
+| `positions[].symbol` | string | Token symbol |
+| `positions[].balance` | string | Holder's token balance in **base units** (`i128` string in the asset's `decimals` base). Divide by `10 ** decimals` to obtain the token amount. |
+| `positions[].share_percent` | number | Share of the asset's total supply owned, 0–100 with 2 decimal places (`f64`) |
+| `positions[].value_usd` | number | Estimated position value in **USD dollars** (`f64`), calculated from `share_percent` of the asset's valuation |
+| `positions[].claimable` | array | Unclaimed pro-rata shares across open dividend distributions |
+| `positions[].claimable[].distribution_id` | number | Distribution identifier |
+| `positions[].claimable[].payment_token` | string | Contract address of the token used to pay the dividend |
+| `positions[].claimable[].amount` | string | Estimated claimable dividend in **payment-token base units** (`i128` string). Divide by `10 ** payment_decimals` (e.g. 7 for SAC USDC). |
 **Response schema** (`HolderPosition`):
 
 | Field | Type | Unit | Nullable | Description |
@@ -71,6 +89,23 @@ curl "$API_BASE_URL/v1/holders/$ADDRESS/position"
   It is an estimate from indexed data, not an on-chain claim quote.
 - An address with no holdings returns an empty `positions` array.
 
+<CalloutBox variant="tip" title="Position unit conversions">
+Because asset tokens and payment tokens may use different decimal bases, always scale each amount using its corresponding token decimals:
+
+```typescript
+// 1. Convert asset token balance (e.g. TST with decimals = 2):
+const rawBalance = BigInt(position.balance); // "250"
+const assetDecimals = 2;
+const displayBalance = Number(rawBalance) / (10 ** assetDecimals);
+// => 2.50 TST
+
+// 2. Convert claimable dividend (e.g. USDC payment token with decimals = 7):
+const rawClaimable = BigInt(position.claimable[0].amount); // "200"
+const paymentDecimals = 7;
+const displayClaimable = Number(rawClaimable) / (10 ** paymentDecimals);
+// => 0.0000200 USDC
+```
+</CalloutBox>
 ## What to read next
 
 - [API · Holders](/docs/api/holders) — list all holders for a single asset.

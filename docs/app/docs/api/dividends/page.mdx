@@ -26,6 +26,17 @@ creation ledger (newest first).
 
 **Response schema** (`Distribution`, per distribution):
 
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | number | Distribution id |
+| `asset_token` | string | The asset paid out on |
+| `payment_token` | string | Token used to pay |
+| `total_amount` | string | Pool size in **payment-token base units** (`i128` string). Divide by `10 ** payment_token_decimals` to get human-readable units. |
+| `distributed` | string | Claimed so far in **payment-token base units** (`i128` string). Divide by `10 ** payment_token_decimals` to get human-readable units. |
+| `claimed_percent` | number | Percentage of pool claimed, 0–100 with 2 decimal places (`f64`). |
+| `overflow_detected` | boolean | `true` when `distributed` exceeds `total_amount` (on-chain anomaly, not an API bug) |
+| `completed` | boolean | `true` once fully claimed |
+| `created_at_ledger` | number | |
 | Field | Type | Unit | Nullable | Description |
 |-------|------|------|----------|-------------|
 | `id` | integer | Distribution id | No | |
@@ -105,6 +116,23 @@ curl $API_BASE_URL/v1/assets/1/distributions/1
 
 Returns `404` with `{ "error": "not_found", … }` when the asset id or the distribution id is unknown.
 
+<CalloutBox variant="tip" title="Payment-token units and conversion">
+`total_amount` and `distributed` are measured in the **payment token's** base units, not the asset token's. Classic Stellar assets (SACs) such as USDC use 7 decimals, whereas other tokens may specify different decimals.
+
+```typescript
+// Converting distribution amounts for a payment token with 7 decimals (e.g. SAC USDC):
+const paymentDecimals = 7;
+
+// Pool size:
+const rawTotal = BigInt(distribution.total_amount); // "100000000000"
+const displayTotal = Number(rawTotal) / (10 ** paymentDecimals);
+// => 10,000.0 USDC
+
+// Claimed so far:
+const rawDistributed = BigInt(distribution.distributed); // "25000000000"
+const displayDistributed = Number(rawDistributed) / (10 ** paymentDecimals);
+// => 2,500.0 USDC
+```
 <CalloutBox variant="note">
 `total_amount` and `distributed` are in the **payment token's** base units, not the
 asset token's. Classic Stellar assets (SACs — Stellar Asset Contracts, the on-chain

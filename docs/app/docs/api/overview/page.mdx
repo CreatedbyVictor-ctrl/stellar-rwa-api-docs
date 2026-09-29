@@ -241,16 +241,39 @@ These are **breaking** and will only ship under a new prefix (`/v2`):
 - Security fixes may change behaviour without notice when there is no
   compatible alternative; such changes will be called out in the changelog.
 
-## Conventions
+## Amount units and conventions
 
-- **Large integers are strings.** Token amounts and valuations are `i128`
-  on-chain. To avoid precision loss in JavaScript, they are serialized as decimal
-  **strings** (`total_supply`, `valuation_cents`, `balance`, `total_amount`).
-- **Convenience floats.** Valuations also include a `valuation_usd` (float
-  dollars) and percentages (`share_percent`, `claimed_percent`) for display.
-- **Amounts are raw base units.** Divide by `10 ** decimals` to get a display
-  value. The asset's `decimals` is included on each asset.
-- **Cents.** `valuation_cents` is USD cents; `valuation_usd = valuation_cents / 100`.
+All monetary amounts and token supplies in the API reference adhere to strict unit rules that agree with the underlying Soroban contracts:
+
+- **Large integers are strings.** Token amounts, valuations, balances, and dividend pools are 128-bit signed integers (`i128`) on-chain. To eliminate precision loss in JavaScript and other IEEE 754 floating-point runtimes, they are serialized as decimal **strings** (`total_supply`, `valuation_cents`, `tvl_cents`, `balance`, `total_amount`, `distributed`).
+- **Valuations are USD cents.** `valuation_cents` (on assets) and `tvl_cents` (on stats) represent valuations in **USD cents** (`1 USD = 100 cents`). To convert to dollar display values, divide by 100:
+  ```typescript
+  const cents = BigInt(asset.valuation_cents); // "500000000"
+  const dollars = Number(cents) / 100; // 5000000.00 ($5,000,000.00)
+  ```
+- **Convenience floats.** For quick display and charting, valuations also provide a `valuation_usd` and `tvl_usd` (`f64` US dollars), and percentages are given as numbers (`share_percent`, `claimed_percent`).
+- **Token amounts are in the token's own decimals base.** Asset balances (`balance`) and supplies (`total_supply`) are given as raw integer base units. Divide by `10 ** decimals` (where `decimals` is the asset's configured decimal places, e.g. `2` or `7`):
+  ```typescript
+  const rawSupply = BigInt(asset.total_supply); // "1000000"
+  const displaySupply = Number(rawSupply) / (10 ** asset.decimals); // 10000.00
+  ```
+- **Dividend pools use payment-token base units.** In dividend distributions, `total_amount`, `distributed`, and claimable shares are measured in base units of the **payment token** (e.g. Classic Stellar assets / SAC tokens like USDC typically use 7 decimals):
+  ```typescript
+  const rawDividend = BigInt(distribution.total_amount); // "100000000000"
+  const paymentDecimals = 7;
+  const displayDividend = Number(rawDividend) / (10 ** paymentDecimals); // 10000.0 USDC
+  ```
+
+| Amount field | Format | Unit | Conversion to display |
+|---|---|---|---|
+| `valuation_cents` | string (`i128`) | USD cents | `Number(BigInt(valuation_cents)) / 100` |
+| `valuation_usd` | number (`f64`) | USD dollars | Already in USD |
+| `tvl_cents` | string (`i128`) | USD cents | `Number(BigInt(tvl_cents)) / 100` |
+| `tvl_usd` | number (`f64`) | USD dollars | Already in USD |
+| `total_supply` | string (`i128`) | Asset token base units | `Number(BigInt(total_supply)) / 10 ** decimals` |
+| `balance` | string (`i128`) | Asset token base units | `Number(BigInt(balance)) / 10 ** decimals` |
+| `total_amount` | string (`i128`) | Payment token base units | `Number(BigInt(total_amount)) / 10 ** payment_decimals` |
+| `distributed` | string (`i128`) | Payment token base units | `Number(BigInt(distributed)) / 10 ** payment_decimals` |
 
 ## Endpoints
 
@@ -380,6 +403,19 @@ can call the API directly from the browser.
   "last_updated": "2026-07-09T08:43:12.101772791+00:00"
 }
 ```
+
+**Response schema:**
+
+| Field | Type | Unit / Description |
+|---|---|---|
+| `total_assets` | number | Total number of assets registered in the registry contract |
+| `active_assets` | number | Count of active assets |
+| `tvl_cents` | string | Total value locked across active assets in **USD cents** (`i128` string). Divide by 100 for USD dollars. |
+| `tvl_usd` | number | Total value locked in **USD dollars** (`f64` float convenience field, equal to `tvl_cents / 100`) |
+| `total_holders` | number | Count of distinct approved addresses with a positive balance across all assets |
+| `total_distributions` | number | Total dividend distributions created across all assets |
+| `last_indexed_ledger` | number | Most recent ledger read by the indexer |
+| `last_updated` | string or null | RFC 3339 timestamp of the last successful index refresh |
 
 `total_holders` is the count of **distinct approved addresses** across all assets;
 `last_indexed_ledger` is the ledger the most recent successful refresh read from.

@@ -15,7 +15,7 @@ export const metadata = {
 | --- | --- | --- |
 | `asset_type` | e.g. `real_estate` | Only assets of this class. |
 | `active` | `true`, `false` | Only active or inactive assets. |
-| `sort` | `valuation` | Sort by USD valuation. |
+| `sort` | `valuation` | Sort by USD valuation (ordered by `valuation_cents` in USD cents). |
 | `order` | `asc`, `desc` (default) | Direction; requires `sort`. |
 | `offset`, `limit` | integers | Pagination (limit defaults to 50, max 100). |
 

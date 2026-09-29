@@ -35,6 +35,28 @@ Results are paginated to keep large collections bounded. Use `offset` and `limit
 curl "$API_BASE_URL/assets?asset_type=real_estate&active=true&offset=0&limit=50"
 ```
 
+**Response schema** (per asset):
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | number | Registry id |
+| `token_contract` | string | Asset-token contract |
+| `issuer` | string | Issuer account |
+| `name` | string | |
+| `symbol` | string | |
+| `asset_type` | string | `real_estate` \| `invoice` \| `commodity` |
+| `description` | string | |
+| `valuation_cents` | string | Valuation in **USD cents** (`i128` string). Divide by 100 to get USD dollars. |
+| `valuation_usd` | number | Valuation in **USD dollars** (`f64` convenience float, equal to `valuation_cents / 100`). |
+| `decimals` | number | Number of decimal places used by this asset token (e.g. `2`). |
+| `total_supply` | string | Total supply in **base units** (`i128` string in the token's `decimals` base). Divide by `10 ** decimals` to get the human-readable token amount. |
+| `holders` | number | Addresses with a positive balance |
+| `active` | boolean | |
+| `paused` | boolean | |
+| `compliance_contract` | string | Gate for this asset |
+| `created_at_ledger` | number | |
+| `indexed_at_ledger` | number | Most recent ledger successfully indexed for this asset |
+| `index_error` | string or null | Per-asset index error, if the latest refresh failed |
 **Response schema** (`Asset`, per asset):
 
 | Field | Type | Unit | Nullable | Description |
@@ -122,10 +144,22 @@ curl "$API_BASE_URL/v1/assets/1?fields=id,name,active,indexed_at_ledger"
 Returned with status `404` when no asset has the given id. A non-numeric id
 (`/assets/abc`) is rejected with `400` by the router.
 
-<CalloutBox variant="tip">
-`total_supply` and `valuation_cents` are strings. In JavaScript, parse them with
-`BigInt(asset.total_supply)` and compute a display value as
-`Number(BigInt(asset.total_supply)) / 10 ** asset.decimals`.
+<CalloutBox variant="tip" title="Amount units and conversions">
+Both `total_supply` and `valuation_cents` are 128-bit integers returned as strings to prevent rounding in JavaScript runtimes.
+
+```typescript
+// 1. Converting total_supply (base units to display tokens):
+// Given total_supply = "1000000" and decimals = 2:
+const rawSupply = BigInt(asset.total_supply);
+const displaySupply = Number(rawSupply) / (10 ** asset.decimals);
+// => 10,000.00 MLOFT
+
+// 2. Converting valuation_cents (USD cents to USD dollars):
+// Given valuation_cents = "500000000":
+const rawCents = BigInt(asset.valuation_cents);
+const displayUsd = Number(rawCents) / 100;
+// => 5000000.00 ($5,000,000.00 USD)
+```
 </CalloutBox>
 
 ## What to read next
