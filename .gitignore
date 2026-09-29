@@ -1,10 +1,23 @@
 # Rust
 /api/target
+**/*.rs.bk
 
 # Node
 node_modules
 .next
 out
+dist
+build
+
+# Test artifacts
+__snapshots__
+*.snap
+coverage
+.nyc_output
+
+# TypeScript build info
+*.tsbuildinfo
+next-env.d.ts
 
 # Env
 .env
@@ -16,16 +29,11 @@ out
 .vscode/*
 !.vscode/extensions.json
 
-# Test snapshots and generated test artifacts
-**/__snapshots__/
-*.snap
+# Vercel
+.vercel
 
-# Coverage and build artifacts
-coverage/
-*.lcov
-.nyc_output/
-*.tsbuildinfo
-*.log
-
-# Kiro agent working files
-.kiro/
+# Package manager logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

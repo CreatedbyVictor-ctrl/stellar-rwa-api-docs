@@ -2,9 +2,12 @@ export const metadata = {
   title: "API · Request IDs & Logging",
   description: "Correlate a response with server logs using the request id.",
   canonical: "/docs/api/request-ids",
+  lastReviewed: "2026-09-26",
 };
 
 # Request IDs & logging
+
+<LastReviewed date={metadata.lastReviewed} />
 
 Every response carries an `X-Request-Id` header. Send your own `X-Request-Id`
 (up to 64 characters of letters, digits, `-` and `_`) to have it reused.

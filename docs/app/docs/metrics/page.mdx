@@ -2,9 +2,12 @@ export const metadata = {
   title: "Indexer Metrics",
   description: "Prometheus metrics exposed by the Stellar RWA API indexer.",
   canonical: "/docs/metrics",
+  lastReviewed: "2026-09-26",
 };
 
 # Indexer Metrics
+
+<LastReviewed date={metadata.lastReviewed} />
 
 `GET /metrics` (bearer token via `RWA_METRICS_TOKEN`) exposes Prometheus text
 format. Names follow Prometheus conventions: `rwa_indexer_` prefix, base units

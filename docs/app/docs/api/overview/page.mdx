@@ -2,9 +2,12 @@ export const metadata = {
   title: "API Overview",
   description: "How the read-only Stellar RWA indexing API works, and its conventions.",
   canonical: "/docs/api/overview",
+  lastReviewed: "2026-09-28",
 };
 
 # API Overview
+
+<LastReviewed date={metadata.lastReviewed} />
 
 The Stellar RWA API is a **read-only** REST service that indexes all tokenized
 asset activity on Stellar and serves it as JSON. It is written in Rust (Axum +
@@ -251,18 +254,17 @@ These are **breaking** and will only ship under a new prefix (`/v2`):
 
 ## Endpoints
 
-<ApiEndpoint method="GET" path="/v1/stats" description="Platform-wide statistics." />
-<ApiEndpoint method="GET" path="/v1/events" description="Recent contract events captured by the indexer." />
-<ApiEndpoint method="GET" path="/v1/assets" description="All tokenized assets." />
-<ApiEndpoint method="GET" path="/v1/assets/:id" description="A single asset by registry id." />
-<ApiEndpoint method="GET" path="/v1/assets/:id/holders" description="Holder list with balances." />
-<ApiEndpoint method="GET" path="/v1/assets/:id/compliance" description="Non-PII compliance summary." />
-<ApiEndpoint method="GET" path="/v1/assets/:id/dividends" description="Distribution history." />
-<ApiEndpoint method="GET" path="/v1/assets/:id/distributions/:did" description="A single distribution by id." />
-<ApiEndpoint method="GET" path="/v1/holders/:address" description="All assets held by a Stellar address." />
-<ApiEndpoint method="GET" path="/v1/holders/:address/compliance" description="Per-asset compliance status for an address." />
-<ApiEndpoint method="GET" path="/v1/holders/:address/position" description="Positions and claimable dividends for an address." />
-<ApiEndpoint method="GET" path="/v1/compliance/:address" description="Address compliance view across held assets." />
+<ApiEndpoint method="GET" path="/stats" description="Platform-wide statistics." />
+<ApiEndpoint method="GET" path="/events" description="Recent contract events captured by the indexer." />
+<ApiEndpoint method="GET" path="/assets" description="All tokenized assets." />
+<ApiEndpoint method="GET" path="/assets/:id" description="A single asset by registry id." />
+<ApiEndpoint method="GET" path="/assets/:id/holders" description="Holder list with balances." />
+<ApiEndpoint method="GET" path="/assets/:id/compliance" description="Non-PII compliance summary." />
+<ApiEndpoint method="GET" path="/holders/:address" description="All assets held by a Stellar address." />
+<ApiEndpoint method="GET" path="/holders/:address/compliance" description="Compliance status across assets held by an address." />
+<ApiEndpoint method="GET" path="/holders/:address/position" description="Positions and estimated claimable dividends for an address." />
+<ApiEndpoint method="GET" path="/compliance/:address" description="Address compliance view across held assets." />
+<ApiEndpoint method="GET" path="/assets/:id/dividends" description="Distribution history." />
 
 Plus `GET /` (self-describing index), `GET /version` (server version), and `GET /health` (readiness probe — see below).
 
@@ -303,6 +305,29 @@ curl http://localhost:8080/health
 ```
 
 For the full field reference and staleness headers, see [API · Health & Indexer Lag](/docs/api/health).
+
+### `AddressHolding` (`GET /holders/:address`)
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `address` | string | — | No | Holder account address |
+| `asset_id` | integer | Registry id | No | |
+| `asset_name` | string | — | No | |
+| `symbol` | string | — | No | Asset-token symbol |
+| `balance` | string | Asset-token base units | No | Exact balance as a decimal string |
+| `share_percent` | number | Percent | No | Share of the asset's total supply |
+
+### `AddressCompliance` (`GET /holders/:address/compliance`, `GET /compliance/:address`)
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `address` | string | — | No | Holder account address |
+| `asset_id` | integer | Registry id | No | |
+| `asset_name` | string | — | No | |
+| `symbol` | string | — | No | Asset-token symbol |
+| `balance` | string | Asset-token base units | No | Exact balance as a decimal string |
+| `status` | string | — | No | Indexed compliance status; currently `approved` for returned holders |
+| `allowed` | boolean | — | No | Indexed value; currently `true` for returned holders, not a fresh contract gate check |
 
 ## Error responses
 
@@ -359,9 +384,15 @@ can call the API directly from the browser.
 `total_holders` is the count of **distinct approved addresses** across all assets;
 `last_indexed_ledger` is the ledger the most recent successful refresh read from.
 
-## What to read next
+**Response schema** (`Stats`):
 
-- [API · Assets](/docs/api/assets) — list and fetch tokenized assets.
-- [API · Health & Indexer Lag](/docs/api/health) — understand the health endpoint's 200/503 semantics.
-- [Rate Limits & Caching](/docs/api/rate-limits) — ETag conditional requests and polling recommendations.
-- [Architecture Overview](/docs/architecture) — how the indexer works and what "~10 seconds stale" means.
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `total_assets` | integer | Assets | No | Total indexed assets |
+| `active_assets` | integer | Assets | No | Indexed assets marked active |
+| `tvl_cents` | string | USD cents | No | Exact TVL as a decimal string |
+| `tvl_usd` | number | USD | No | TVL in dollars |
+| `total_holders` | integer | Distinct addresses | No | Addresses with a positive token balance across assets |
+| `total_distributions` | integer | Distributions | No | Total indexed dividend distributions |
+| `last_indexed_ledger` | integer | Ledger sequence | No | Ledger read by the last successful full refresh |
+| `last_updated` | string | RFC 3339 timestamp | Yes | JSON `null` before a successful refresh |

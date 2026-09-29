@@ -2,9 +2,12 @@ export const metadata = {
   title: "Asset Token Contract",
   description: "Compliant RWA token — every transfer is gated by the compliance contract.",
   canonical: "/docs/contracts/asset-token",
+  lastReviewed: "2026-09-26",
 };
 
 # Asset Token Contract
+
+<LastReviewed date={metadata.lastReviewed} />
 
 <CalloutBox variant="note">
 This documentation is validated against the contract specification in <code>docs/lib/contracts.ts</code>. Method signatures must match the spec — if the contract changes, update both the docs and the spec.
@@ -88,6 +91,22 @@ Mints new tokens to a compliance-approved recipient, increasing `total_supply`.
 - **Auth:** `admin` (must equal the stored admin)
 - **Errors:** `Unauthorized (3)`, `InvalidAmount (5)`, `Paused (6)`, `RecipientNotCompliant (8)`, `Overflow (9)`.
 
+### `mint_batch`
+
+```rust
+fn mint_batch(env: Env, admin: Address, recipients: Vec<Address>, amounts: Vec<i128>)
+```
+
+Mints multiple allocations in one invocation. Each recipient must be
+compliance-approved, every amount must be positive, and the two vectors must
+have the same length. The operation is atomic: if one allocation is invalid,
+none of the batch is minted.
+
+- **Auth:** `admin` (must equal the stored admin)
+- **Errors:** `Unauthorized (3)`, `InvalidAmount (5)`, `Paused (6)`,
+  `RecipientNotCompliant (8)`, and `Overflow (9)`. Provide exactly one positive
+  amount for every recipient.
+
 ### `burn`
 
 ```rust
@@ -106,7 +125,9 @@ fn balance(env: Env, id: Address) -> i128
 fn total_supply(env: Env) -> i128
 ```
 
-View functions. `balance` returns `0` for an unknown address.
+View functions; they do not require authorization and do not change state.
+`balance` returns `0` for an unknown address. `total_supply` is in integer base
+units using the token's configured `decimals`.
 
 ### `pause` / `unpause`
 
@@ -115,7 +136,9 @@ fn pause(env: Env, admin: Address)
 fn unpause(env: Env, admin: Address)
 ```
 
-Halts or resumes all transfers and mints. **Auth:** `admin`. Errors: `Unauthorized (3)`.
+Halts or resumes all transfers and mints. **Auth:** `admin`. Errors:
+`Unauthorized (3)`. Calling `pause` when already paused, or `unpause` when not
+paused, is harmless and leaves the current state unchanged.
 
 ### `update_valuation`
 
@@ -123,7 +146,8 @@ Halts or resumes all transfers and mints. **Auth:** `admin`. Errors: `Unauthoriz
 fn update_valuation(env: Env, admin: Address, new_valuation: i128)
 ```
 
-Updates the recorded USD-cents valuation. **Auth:** `admin`. Errors: `Unauthorized (3)`, `InvalidAmount (5)` if negative.
+Updates the recorded USD-cents valuation. **Auth:** `admin`. Errors:
+`Unauthorized (3)`, `InvalidAmount (5)` if negative.
 
 ### `set_compliance`
 
@@ -133,7 +157,7 @@ fn set_compliance(env: Env, admin: Address, compliance: Address)
 
 Points the token at a different compliance contract. Because the token knows only
 the compliance *interface* (`is_allowed`), the concrete contract can be swapped.
-**Auth:** `admin`.
+**Auth:** `admin`. Errors: `Unauthorized (3)`.
 
 ### `get_metadata`
 
@@ -141,7 +165,8 @@ the compliance *interface* (`is_allowed`), the concrete contract can be swapped.
 fn get_metadata(env: Env) -> AssetMetadata
 ```
 
-Returns the full metadata record.
+Returns the full metadata record. It is a view call, so it has no authorization
+requirement and no contract-defined error for a correctly initialized token.
 
 ## Code example
 
