@@ -296,6 +296,100 @@ A `transfer` will revert with <code>SenderNotCompliant (7)</code> or
 error up front.
 </CalloutBox>
 
+## The write path, stage by stage
+
+The API is read-only, so every write goes wallet → Soroban RPC → contract. A
+write always runs through the same six stages, in this order. Each stage fails
+in its own way, and knowing which stage failed tells you what to do next.
+
+| # | Stage | What happens | Failure modes | What to do |
+|---|-------|--------------|---------------|------------|
+| 1 | **Build** | Load the source account with `server.getAccount(from)` and build a transaction with one `contract.call(...)` operation. | Account not found (unfunded on this network); wrong contract id; argument that cannot be encoded as the expected `ScVal` (e.g. an `i128` passed as a JS `number`). | Fund the account, check the id against the registry's `get_all_assets`, encode amounts with `nativeToScVal(x, { type: "i128" })`. |
+| 2 | **Simulate** | `server.simulateTransaction(built)` runs the call against current ledger state without submitting it. | `rpc.Api.isSimulationError(sim)` — the contract would revert (e.g. `SenderNotCompliant (7)`, `InsufficientBalance (4)`, `Paused (6)`, `Unauthorized (3)`), or the RPC is unreachable / rate limited. | Map the contract error code to a message (see the contract reference pages); nothing was signed or spent, so fix the input and retry. |
+| 3 | **Assemble** | `rpc.assembleTransaction(built, sim).build()` attaches the footprint, auth entries, and resource fee from the simulation. | Simulation was a restore result (`rpc.Api.isSimulationRestore(sim)`) because contract state has been archived; assembling a stale simulation. | Submit the restore first, then re-simulate. Always assemble from the simulation of the exact transaction you built. |
+| 4 | **Sign** | Freighter's `signTransaction(xdr, { networkPassphrase, address })` returns `signedTxXdr`. | User rejects the prompt (returns an `error`); Freighter is on a different network than `networkPassphrase`; the connected address is not the one that must authorize. | Treat rejection as a cancel, not an error; check the network and address before building. |
+| 5 | **Submit** | `server.sendTransaction(signed)` hands the envelope to Soroban RPC. | `status` of `ERROR` (malformed or rejected, e.g. `txBadSeq`, `txInsufficientFee`), `TRY_AGAIN_LATER` (node busy), or `DUPLICATE`. | On `ERROR` read `errorResult`; on `TRY_AGAIN_LATER` resubmit the same signed envelope; on bad sequence rebuild from stage 1. |
+| 6 | **Poll** | Call `server.getTransaction(hash)` until the status leaves `NOT_FOUND`. | `FAILED` — the contract reverted on-chain (state changed between simulate and apply, e.g. the holder was suspended); still `NOT_FOUND` after the transaction's timeout — it expired and will never land. | On `FAILED`, re-simulate to see the current error; on expiry rebuild from stage 1. |
+
+Once the transaction is `SUCCESS`, the change is on the ledger immediately, but
+the [REST API](/docs/api/overview) only reflects it after the indexer's next
+refresh (about 10 seconds — see [How data flows](/docs/architecture#how-data-flows)).
+Read the contract directly if you need to confirm the new state sooner.
+
+### Worked example: transfer and wait for confirmation
+
+This extends the `transfer` sample above with explicit handling for each stage.
+
+```ts
+import {
+  Contract, TransactionBuilder, Networks, BASE_FEE, rpc, Address, nativeToScVal,
+} from "@stellar/stellar-sdk";
+import { signTransaction } from "@stellar/freighter-api";
+
+const server = new rpc.Server("https://soroban-testnet.stellar.org");
+const PASSPHRASE = Networks.TESTNET;
+
+export async function transferAndConfirm(
+  token: string, from: string, to: string, amount: bigint,
+): Promise<string> {
+  // 1. Build
+  const account = await server.getAccount(from); // throws if unfunded
+  const built = new TransactionBuilder(account, {
+    fee: BASE_FEE, networkPassphrase: PASSPHRASE,
+  })
+    .addOperation(new Contract(token).call(
+      "transfer",
+      new Address(from).toScVal(),
+      new Address(to).toScVal(),
+      nativeToScVal(amount, { type: "i128" }),
+    ))
+    .setTimeout(60)
+    .build();
+
+  // 2. Simulate
+  const sim = await server.simulateTransaction(built);
+  if (rpc.Api.isSimulationError(sim)) {
+    throw new Error(`simulation failed: ${sim.error}`); // e.g. Error(Contract, #7)
+  }
+  if (rpc.Api.isSimulationRestore(sim)) {
+    throw new Error("contract state is archived; submit a restore first");
+  }
+
+  // 3. Assemble
+  const prepared = rpc.assembleTransaction(built, sim).build();
+
+  // 4. Sign
+  const signedResult = await signTransaction(prepared.toXDR(), {
+    networkPassphrase: PASSPHRASE, address: from,
+  });
+  if (signedResult.error) throw new Error("signature rejected");
+  const signed = TransactionBuilder.fromXDR(signedResult.signedTxXdr, PASSPHRASE);
+
+  // 5. Submit
+  const sent = await server.sendTransaction(signed);
+  if (sent.status === "ERROR") {
+    throw new Error(`submit rejected: ${sent.errorResult?.result().switch().name}`);
+  }
+  if (sent.status === "TRY_AGAIN_LATER") {
+    throw new Error("RPC busy; resubmit the same signed transaction");
+  }
+
+  // 6. Poll
+  for (let i = 0; i < 30; i++) {
+    const res = await server.getTransaction(sent.hash);
+    if (res.status === rpc.Api.GetTransactionStatus.SUCCESS) return sent.hash;
+    if (res.status === rpc.Api.GetTransactionStatus.FAILED) {
+      throw new Error(`transaction ${sent.hash} failed on-chain`);
+    }
+    await new Promise((r) => setTimeout(r, 2000)); // NOT_FOUND: not yet in a ledger
+  }
+  throw new Error(`transaction ${sent.hash} not confirmed before timeout`);
+}
+```
+
+The web app follows the same sequence; its progress indicator (*preparing →
+awaiting signature → submitting → confirming*) maps to stages 1–3, 4, 5, and 6.
+See [Transaction feedback](/docs/web-app#transaction-feedback).
 ## Testnet fixtures for compliance failure paths
 
 The scenarios below let you exercise every failure branch of the compliance gate
