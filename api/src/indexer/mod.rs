@@ -398,6 +398,14 @@ struct ReadOutcome {
     latest_ledger: u32,
 }
 
+/// Decode a single simulation result without affecting any other reads in the
+/// current refresh. Callers decide whether to retain the previous snapshot or
+/// skip the affected record when this deterministic conversion fails.
+fn decode_simulation_result(xdr_b64: &str) -> Result<serde_json::Value, IndexError> {
+    let scval = xdr::ScVal::from_xdr_base64(xdr_b64, Limits::none())?;
+    scval_to_json(&scval)
+}
+
 impl Rpc {
     fn new(url: String, source: String) -> Self {
         Rpc {
@@ -498,9 +506,17 @@ impl Rpc {
             .results
             .first()
             .ok_or_else(|| IndexError::Rpc("no simulation result".into()))?;
-        let scval = xdr::ScVal::from_xdr_base64(&entry.xdr, Limits::none())?;
+        let value = decode_simulation_result(&entry.xdr).inspect_err(|error| {
+            tracing::warn!(
+                contract,
+                method,
+                latest_ledger = result.latest_ledger,
+                error = %error,
+                "simulation result decode failed; isolating failed read"
+            );
+        })?;
         Ok(ReadOutcome {
-            value: scval_to_json(&scval)?,
+            value,
             latest_ledger: result.latest_ledger,
         })
     }
@@ -1501,6 +1517,17 @@ mod tests {
 
         let strkey_err = stellar_strkey::Contract::from_string("bad key").unwrap_err();
         assert!(!IndexError::Strkey(strkey_err).is_transient());
+    }
+
+    #[test]
+    fn malformed_simulation_result_is_isolated_from_later_decodes() {
+        assert!(matches!(
+            decode_simulation_result("not valid xdr"),
+            Err(IndexError::Xdr(_))
+        ));
+
+        let valid = xdr::ScVal::Bool(true).to_xdr_base64(Limits::none()).unwrap();
+        assert_eq!(decode_simulation_result(&valid).unwrap(), json!(true));
     }
 
     #[test]
