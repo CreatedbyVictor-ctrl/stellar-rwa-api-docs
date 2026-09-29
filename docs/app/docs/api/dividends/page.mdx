@@ -41,7 +41,7 @@ creation ledger (newest first).
 **Example**
 
 ```bash
-curl $API_BASE_URL/assets/1/dividends
+curl $API_BASE_URL/v1/assets/1/dividends
 ```
 
 ```json
@@ -84,7 +84,7 @@ Same shape as a single item from the list above.
 **Example**
 
 ```bash
-curl $API_BASE_URL/assets/1/distributions/1
+curl $API_BASE_URL/v1/assets/1/distributions/1
 ```
 
 ```json
@@ -107,6 +107,14 @@ Returns `404` with `{ "error": "not_found", … }` when the asset id or the dist
 
 <CalloutBox variant="note">
 `total_amount` and `distributed` are in the **payment token's** base units, not the
-asset token's. Classic Stellar assets (SACs) use 7 decimals, so `100000000000`
+asset token's. Classic Stellar assets (SACs — Stellar Asset Contracts, the on-chain
+representation of classic Stellar assets like USDC) use 7 decimals, so `100000000000`
 above is `10,000.0` units of the payment token.
 </CalloutBox>
+
+## What to read next
+
+- [Dividend Contract](/docs/contracts/dividend) — `create_distribution`, `claim`, and the full function surface.
+- [API · Assets](/docs/api/assets) — get the asset's `token_contract` to cross-reference distributions.
+- [Web App Guide](/docs/web-app) — create distributions and let holders claim through the UI.
+- [Time & Ledgers](/docs/time-and-ledgers) — understand `created_at_ledger` values in distribution responses.

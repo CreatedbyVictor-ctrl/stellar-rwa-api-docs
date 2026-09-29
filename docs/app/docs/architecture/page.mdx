@@ -56,7 +56,10 @@ layer; they interact only through well-defined interfaces.
 **Reads (chain → API → web app)**
 
 1. The API's background indexer calls `simulateTransaction` on Soroban RPC every
-   10 seconds, decoding the returned `ScVal` with `stellar-xdr`.
+   10 seconds, decoding the returned `ScVal` (Stellar Contract Value — the
+   binary-encoded type Soroban uses to pass data in and out of contracts) with
+   `stellar-xdr` (the XDR codec library; XDR is the wire format Stellar uses
+   for all on-chain data).
 2. The decoded state is held in an in-memory snapshot (no database in v1).
 3. The web app — and any other client — fetches that snapshot over REST. This is
    cheaper and simpler than every client simulating its own contract calls.
@@ -128,7 +131,8 @@ path, where the user's wallet is the only key holder.
 The three layers communicate through two stable interfaces:
 
 - **Soroban contract ABI** — the method names and `ScVal` types exposed by the
-  four contracts. The API's `indexer/mod.rs` and the web app's SDK calls both
+  four contracts. (ABI = Application Binary Interface — the contract's public
+  function signatures and argument types.) The API's `indexer/mod.rs` and the web app's SDK calls both
   depend on this.
 - **REST API schema** — the JSON shapes documented in the [API Reference](/docs/api/overview).
   The web app fetches from these endpoints; you can too.
@@ -136,3 +140,10 @@ The three layers communicate through two stable interfaces:
 Changes to either interface are versioned. The API currently has no URL
 versioning (all paths are `/...`); a `v2` prefix will be added when breaking
 changes are needed.
+
+## What to read next
+
+- [Getting Started](/docs/getting-started) — run the API locally and make your first requests.
+- [API Overview](/docs/api/overview) — versioning, caching, and all endpoint conventions.
+- [Compliance Guide](/docs/compliance-guide) — deep dive into the on-chain transfer gate.
+- [Contract Reference: Asset Token](/docs/contracts/asset-token) — the token contract's full method surface.

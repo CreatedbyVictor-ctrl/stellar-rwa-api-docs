@@ -70,3 +70,10 @@ curl "$API_BASE_URL/v1/holders/$ADDRESS/position"
   (`balance / total_supply`) of the unclaimed pool, in payment-token base units.
   It is an estimate from indexed data, not an on-chain claim quote.
 - An address with no holdings returns an empty `positions` array.
+
+## What to read next
+
+- [API · Holders](/docs/api/holders) — list all holders for a single asset.
+- [API · Dividends](/docs/api/dividends) — full distribution history for an asset.
+- [Dividend Contract](/docs/contracts/dividend) — `claimable` and `claim` function reference.
+- [Integration Guide](/docs/integration) — call `claimable` live for an exact on-chain quote.

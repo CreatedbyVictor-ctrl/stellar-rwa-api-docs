@@ -45,9 +45,13 @@ ledger directly before acting on it. See
 ## How indexing works
 
 A background task polls **Soroban RPC** every 10 seconds. On each tick it reads the
-current state of the four contracts by *simulating* view calls — `get_all_assets`
+current state of the four contracts by *simulating* view calls — `simulateTransaction`
+is the Soroban RPC method that runs a contract function read-only, without submitting
+a transaction to the network. It calls `get_all_assets`
 on the registry, then per-asset `get_metadata`, `get_allowlist`, `balance` and
-`get_distributions_for_asset` — and rebuilds an in-memory snapshot. For the full
+`get_distributions_for_asset` — and rebuilds an in-memory snapshot. The results are
+decoded from `ScVal` (Stellar Contract Value — the binary format Soroban uses to
+return data from contracts). For the full
 polling model and what it means for data freshness, see
 [How the indexer rebuilds state](/docs/architecture#how-the-indexer-rebuilds-state).
 
@@ -262,7 +266,45 @@ These are **breaking** and will only ship under a new prefix (`/v2`):
 <ApiEndpoint method="GET" path="/compliance/:address" description="Address compliance view across held assets." />
 <ApiEndpoint method="GET" path="/assets/:id/dividends" description="Distribution history." />
 
-Plus `GET /` (self-describing index) and `GET /health` (liveness).
+Plus `GET /` (self-describing index), `GET /version` (server version), and `GET /health` (readiness probe — see below).
+
+## Health endpoint
+
+`GET /health` reports the liveness and readiness of the API. It is the right probe to use for deciding whether the service can serve useful data.
+
+| HTTP status | `"status"` field | Meaning |
+|-------------|-----------------|---------|
+| `200 OK` | `"ok"` | The indexer is polling normally and the snapshot is fresh. |
+| `503 Service Unavailable` | `"degraded"` | The snapshot is stale — no successful poll within the last `max_age_seconds`. |
+
+The `503` condition fires in two situations:
+1. **Before the first successful poll.** The API process is alive but has not yet indexed any data. It can accept requests but cannot return useful results. This makes `GET /health` behave like a **readiness probe**, not just a liveness probe — use it to delay traffic until the first snapshot is ready.
+2. **After an extended RPC outage.** If the indexer fails to poll for longer than `max_age_seconds` (default: 30 seconds — three poll intervals), the health status flips to `degraded` and stale headers are added to every response.
+
+**Suitability as a readiness probe:** Yes. Do not route traffic to a new instance until `GET /health` returns `200`. This ensures the first request served against the instance hits a populated snapshot, not an empty one.
+
+**Suitability as a liveness probe:** Use with care. Because `GET /health` returns `503` during extended RPC outages, a strict liveness probe configured on this endpoint would restart the process when the RPC is temporarily down — usually the wrong behaviour. A dedicated liveness probe at `/` (which always returns `200`) is more appropriate if you need separate liveness and readiness signals.
+
+**Example response:**
+
+```bash
+curl http://localhost:8080/health
+```
+
+```json
+{
+  "status": "ok",
+  "snapshot_age_seconds": 4,
+  "max_age_seconds": 30,
+  "consecutive_failures": 0,
+  "last_poll_at": "2026-07-09T08:43:12.101772791+00:00",
+  "last_poll_age_seconds": 4,
+  "last_indexed_ledger": 3514152,
+  "ledger_lag": 1
+}
+```
+
+For the full field reference and staleness headers, see [API · Health & Indexer Lag](/docs/api/health).
 
 ### `AddressHolding` (`GET /holders/:address`)
 

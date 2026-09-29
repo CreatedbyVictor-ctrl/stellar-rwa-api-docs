@@ -18,6 +18,10 @@ gated by an external compliance contract: **both** the sender and the recipient
 must pass `is_allowed` before any balance moves. Minting is gated on the
 recipient, so only KYC-approved addresses can ever hold the asset.
 
+SEP-41 (Stellar Ecosystem Proposal 41) is the Soroban token standard — it defines
+the common interface (`transfer`, `balance`, `total_supply`, etc.) that all Soroban
+fungible tokens implement, making them interoperable with wallets and tooling.
+
 Valuation is stored in USD cents (`i128`). Amounts are integer token units in the
 token's own `decimals` base.
 
@@ -220,3 +224,10 @@ const op = token.call(
   there is no floating point. Reject `amount <= 0` (the contract does).
 - **Pause is a kill-switch:** while paused, no value can move. This is intentional
   for incident response and regulatory holds.
+
+## What to read next
+
+- [Compliance Contract](/docs/contracts/compliance) — the gate `asset-token` calls on every transfer.
+- [Compliance Guide](/docs/compliance-guide) — understand how the transfer gate works end to end.
+- [Integration Guide](/docs/integration) — submit a transfer from TypeScript, including simulate-and-assemble.
+- [API · Assets](/docs/api/assets) — read asset metadata and balances over REST.

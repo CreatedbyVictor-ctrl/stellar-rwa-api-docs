@@ -59,7 +59,9 @@ asset. See the [Compliance Guide](/docs/compliance-guide).
 ```
 
 - The **web app** signs and submits transactions through the user's wallet.
-- The **API** only reads: it indexes on-chain state every 10 seconds and never
+- The **API** only reads: it indexes on-chain state every 10 seconds via
+  `simulateTransaction` (the Soroban RPC method that runs a contract function
+  read-only without submitting anything to the network) and never
   holds a key or signs anything.
 
 ## Prerequisites
@@ -136,15 +138,23 @@ curl http://localhost:8080/v1/assets
 [
   {
     "id": 1,
-    "contract_id": "CBMCWLSQSWUTLUJFCNBHNBSXMUM3XU7NAQ5TSNERW4HA4ZZBYHLG4ECZ",
+    "token_contract": "CBMCWLSQSWUTLUJFCNBHNBSXMUM3XU7NAQ5TSNERW4HA4ZZBYHLG4ECZ",
+    "issuer": "GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA",
     "name": "Manhattan Loft",
     "symbol": "MLOFT",
     "asset_type": "real_estate",
+    "description": "A tokenized loft in Manhattan",
     "decimals": 7,
     "total_supply": "50000000000000",
     "valuation_cents": "500000000",
     "valuation_usd": 5000000.0,
-    "active": true
+    "holders": 1,
+    "active": true,
+    "paused": false,
+    "compliance_contract": "CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU",
+    "created_at_ledger": 3502885,
+    "indexed_at_ledger": 3502885,
+    "index_error": null
   }
 ]
 ```
@@ -158,15 +168,23 @@ curl http://localhost:8080/v1/assets/1
 ```json
 {
   "id": 1,
-  "contract_id": "CBMCWLSQSWUTLUJFCNBHNBSXMUM3XU7NAQ5TSNERW4HA4ZZBYHLG4ECZ",
+  "token_contract": "CBMCWLSQSWUTLUJFCNBHNBSXMUM3XU7NAQ5TSNERW4HA4ZZBYHLG4ECZ",
+  "issuer": "GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA",
   "name": "Manhattan Loft",
   "symbol": "MLOFT",
   "asset_type": "real_estate",
+  "description": "A tokenized loft in Manhattan",
   "decimals": 7,
   "total_supply": "50000000000000",
   "valuation_cents": "500000000",
   "valuation_usd": 5000000.0,
-  "active": true
+  "holders": 1,
+  "active": true,
+  "paused": false,
+  "compliance_contract": "CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU",
+  "created_at_ledger": 3502885,
+  "indexed_at_ledger": 3502885,
+  "index_error": null
 }
 ```
 
@@ -223,10 +241,15 @@ curl http://localhost:8080/v1/assets/1/compliance
 
 ```json
 {
-  "asset_id": 1,
-  "total_approved": 1,
-  "total_suspended": 0,
-  "total_expired": 0
+  "total_records": 1,
+  "approved": 1,
+  "suspended": 0,
+  "rejected": 0,
+  "pending": 0,
+  "with_expiry": 0,
+  "jurisdictions": [
+    { "jurisdiction": "US", "count": 1 }
+  ]
 }
 ```
 
@@ -361,3 +384,10 @@ is **Manhattan Loft** (`MLOFT`), a `real_estate` asset valued at $5,000,000.
 
 Continue to the [Compliance Guide](/docs/compliance-guide) — the concept that
 makes this an RWA platform rather than a plain token factory.
+
+## What to read next
+
+- [Architecture Overview](/docs/architecture) — understand how the API, contracts, and web app fit together.
+- [Compliance Guide](/docs/compliance-guide) — how the on-chain transfer gate works and why it matters.
+- [API Overview](/docs/api/overview) — the REST service conventions and all available endpoints.
+- [Integration Guide](/docs/integration) — query the API and call contracts directly from TypeScript.
