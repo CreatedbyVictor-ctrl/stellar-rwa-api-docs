@@ -21,17 +21,24 @@ Returns an aggregate view of an asset's KYC allowlist. It deliberately exposes
 |------|------|-------|
 | `id` | number | Registry id |
 
-**Response schema**
+**Response schema** (`ComplianceSummary`):
 
-| Field | Type | Notes |
-|-------|------|-------|
-| `total_records` | number | Addresses ever added to the allowlist |
-| `approved` | number | Stored KYC status is `Approved` — **not** the same as currently passing `is_allowed` |
-| `suspended` | number | |
-| `rejected` | number | |
-| `pending` | number | |
-| `with_expiry` | number | Records with a non-zero `expires_at` |
-| `jurisdictions` | array | `{ jurisdiction, count }` breakdown |
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `total_records` | integer | Records | No | Addresses ever added to the allowlist |
+| `approved` | integer | Records | No | Stored KYC status is `Approved` — **not** the same as currently passing `is_allowed` |
+| `suspended` | integer | Records | No | |
+| `rejected` | integer | Records | No | |
+| `pending` | integer | Records | No | |
+| `with_expiry` | integer | Records | No | Records with a non-zero `expires_at` |
+| `jurisdictions` | `JurisdictionCount[]` | One entry per jurisdiction | No | Counts grouped by jurisdiction code |
+
+`JurisdictionCount` fields:
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `jurisdiction` | string | — | No | Jurisdiction code from the compliance record |
+| `count` | integer | Records | No | Records in this jurisdiction |
 
 **Example**
 
