@@ -23,6 +23,7 @@ export const NAV: NavSection[] = [
     items: [
       { title: "Compliance Guide", href: "/docs/compliance-guide" },
       { title: "Time & Ledgers", href: "/docs/time-and-ledgers" },
+      { title: "Security Considerations", href: "/docs/security-considerations" },
     ],
   },
   {

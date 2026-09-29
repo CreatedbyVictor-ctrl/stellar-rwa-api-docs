@@ -2,133 +2,15 @@ export const metadata = {
   title: "Architecture overview",
   description: "How the four Soroban contracts fit together, and how the three repositories sit around them.",
   canonical: "/docs/architecture",
+  lastReviewed: "2026-09-28",
 };
 
 # Architecture overview
 
-The Stellar RWA Toolkit is built around four Soroban smart contracts. Everything
-else — the REST API, the web app, and this documentation site — is tooling around
-those contracts. Understanding what each contract does, and how they depend on one
-another, is the fastest way to get oriented.
+<LastReviewed date={metadata.lastReviewed} />
 
-## The four contracts
-
-### Asset token
-
-The `asset-token` contract is a compliant fungible token that represents a
-fractional share of a tokenised real-world asset. It follows the SEP-41 token
-interface (the Stellar equivalent of ERC-20) and adds compliance gating on top:
-every `transfer` and every `mint` checks the sender and recipient against the
-compliance contract before moving any balance. The issuer deploys one
-`asset-token` per RWA — each Manhattan Loft, invoice, or commodity parcel is its
-own independent token instance. The contract stores the asset's name, symbol,
-type, total supply, decimals, USD valuation, and the address of its paired
-compliance contract. See the [Asset token reference](/docs/contracts/asset-token)
-for the full method list and error codes.
-
-### Compliance contract
-
-The `compliance` contract is the on-chain gatekeeper. It maintains a KYC
-allowlist — one record per Stellar address — that tracks each holder's approval
-status (`Approved`, `Pending`, `Rejected`, or `Suspended`), jurisdiction (an ISO
-country code), and approval expiry (expressed as a ledger sequence number). The
-single function `is_allowed` is the gate the `asset-token` calls on every
-transfer: it returns `true` only if the address is approved, not expired, and in a
-jurisdiction that the issuer has not blocked. Because the `asset-token` depends only
-on the `is_allowed` interface, the issuer can swap the underlying compliance
-contract (via `set_compliance`) without redeploying the token — useful for migrating
-to a stricter policy. Each `asset-token` is paired with exactly one compliance
-contract at deployment time. See the [Compliance contract reference](/docs/contracts/compliance)
-for the allowlist methods and the [Compliance Guide](/docs/compliance-guide) for
-the full operational model.
-
-### Registry contract
-
-The `registry` contract is the platform-wide, on-chain index of every tokenised
-asset. When an issuer deploys an `asset-token` and its paired `compliance`
-contract, they register the token in the registry, which assigns a monotonically
-increasing numeric id and records the issuer address, asset type, valuation, and
-active status. The registry is a **singleton** — there is one per deployment, not
-one per asset. It exposes query helpers (`get_all_assets`, `get_assets_by_type`,
-`get_assets_by_issuer`) that the API's background indexer calls on every poll
-cycle to discover the full set of assets without hard-coding any token addresses.
-It also aggregates total value locked (TVL) across all active assets. See the
-[Registry contract reference](/docs/contracts/registry).
-
-### Dividend contract
-
-The `dividend` contract handles proportional yield distribution to token holders.
-An issuer calls `create_distribution`, which pulls a specified amount of a payment
-token (for example USDC) into the contract's escrow and records the distribution.
-Each holder then claims their share — `total_amount × balance / total_supply` —
-directly from escrow by calling `claim`. Balances are read **at claim time** from
-the `asset-token`, not at distribution creation time. Like the registry, the
-dividend contract is a **singleton** across the platform: one instance manages
-distributions for all assets. See the [Dividend contract reference](/docs/contracts/dividend).
-
-## How the contracts relate
-
-The four contracts form two groups:
-
-- **Per-asset pair:** `asset-token` + `compliance`. They are deployed and
-  initialised together. The `asset-token` holds the address of its compliance
-  contract and calls `is_allowed` on every transfer. The two are tightly coupled,
-  but the coupling is one-directional: the compliance contract is unaware of the
-  token; it only answers `is_allowed` queries.
-
-- **Platform singletons:** `registry` + `dividend`. Each is deployed once per
-  platform. Assets are registered in the registry by their issuer. The dividend
-  contract manages distributions for all assets identified by their `asset-token`
-  address.
-
-```
-                    ┌───────────────────────────────────────────────────────────┐
-                    │                  Stellar network                          │
-                    │                                                           │
-                    │  Per-asset pair (one instance per RWA):                  │
-                    │                                                           │
-                    │  ┌──────────────────┐   is_allowed(from)   ┌──────────┐  │
-                    │  │  asset-token     │ ──────────────────▶  │compliance│  │
-                    │  │  (SEP-41 token   │ ──────────────────▶  │(KYC      │  │
-                    │  │   + compliance   │   is_allowed(to)     │ allowlist)│  │
-                    │  │   gate)          │                      └──────────┘  │
-                    │  └──────────────────┘                                    │
-                    │         │  balance, total_supply                         │
-                    │         ▼                                                 │
-                    │  Platform singletons (one instance per deployment):       │
-                    │                                                           │
-                    │  ┌──────────────────┐   ┌──────────────────────────────┐ │
-                    │  │  registry        │   │  dividend                    │ │
-                    │  │  (asset index,   │   │  (yield escrow and           │ │
-                    │  │   TVL)           │   │   proportional claims)       │ │
-                    │  └──────────────────┘   └──────────────────────────────┘ │
-                    └───────────────────────────────────────────────────────────┘
-```
-
-The cross-contract dependency flows like this at runtime:
-
-1. On every `transfer` or `mint`, the `asset-token` calls `compliance.is_allowed`
-   for each party. If either returns `false`, the transaction reverts immediately
-   — no balance moves, no event is emitted.
-2. When an issuer registers a new asset, they call `registry.register_asset` with
-   the deployed `asset-token` address. The API discovers new assets by polling
-   `registry.get_all_assets`.
-3. When an issuer creates a distribution, they call
-   `dividend.create_distribution(asset_token, ...)`. Holders later call
-   `dividend.claim(distribution_id, holder)`, which reads the holder's current
-   balance from the `asset-token` at that moment.
-
-<CalloutBox variant="note">
-The `registry` and `dividend` contracts never call `is_allowed`. Only the
-`asset-token` enforces the compliance gate. Registering an asset in the registry
-or creating a dividend distribution does not require the issuer to be KYC-approved
-by the asset's compliance contract.
-</CalloutBox>
-
-## Three repositories, one platform
-
-The four contracts live in a sister repository. This repo adds an indexing API and
-documentation around them.
+The Stellar RWA Toolkit is split across three repositories. Each owns a distinct
+layer; they interact only through well-defined interfaces.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐

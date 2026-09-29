@@ -1,12 +1,17 @@
-# Build output
+# Next.js build output
 .next/
 out/
+dist/
 build/
 
 # Dependencies
 node_modules/
 
-# Test snapshots and coverage
+# TypeScript build info
+*.tsbuildinfo
+next-env.d.ts
+
+# Test artifacts
 __snapshots__/
 *.snap
 coverage/
@@ -15,10 +20,6 @@ coverage/
 # Env
 .env
 .env*.local
-
-# TypeScript
-*.tsbuildinfo
-next-env.d.ts
 
 # Vercel
 .vercel/
