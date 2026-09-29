@@ -42,8 +42,45 @@ const MAX_READ_ATTEMPTS: u32 = 4;
 const RETRY_BASE_DELAY: Duration = Duration::from_millis(150);
 /// Ceiling on backoff growth between retries.
 const RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
-const EXPECTED_ABI_VERSION: u64 = 1;
 const DIVIDEND_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// Per-contract ABI version expectations for the four RWA contract types.
+///
+/// Each field is a `RangeInclusive<u64>` — a range of `VERSION` values the
+/// indexer's decode structs are known to be compatible with.  Using a range
+/// rather than a single constant means a backwards-compatible bump in one
+/// contract (e.g. dividend going from 3 to 4) does not require simultaneous
+/// changes in the others, and a rolling upgrade window can accept both the
+/// old and new version simultaneously.
+///
+/// The ranges here reflect the versions in `stellar-rwa-contracts` main at
+/// the time this code was written:
+///   - registry     VERSION = 1
+///   - compliance   VERSION = 1
+///   - asset-token  VERSION = 1
+///   - dividend     VERSION = 3  (bumped for snapshot-based claim/cancel)
+///
+/// See `docs/app/docs/api/versioning/page.mdx` for the human-readable table
+/// and a link to DEPLOYMENTS.md in the contracts repository.
+#[derive(Debug, Clone)]
+pub struct AbiExpectation {
+    pub registry: std::ops::RangeInclusive<u64>,
+    pub dividend: std::ops::RangeInclusive<u64>,
+    pub asset_token: std::ops::RangeInclusive<u64>,
+    pub compliance: std::ops::RangeInclusive<u64>,
+}
+
+impl AbiExpectation {
+    /// Returns the default expectation matching `stellar-rwa-contracts` main.
+    pub fn default_ranges() -> Self {
+        AbiExpectation {
+            registry: 1..=1,
+            dividend: 1..=3,
+            asset_token: 1..=1,
+            compliance: 1..=1,
+        }
+    }
+}
 const TESTNET_RPC: &str = "https://soroban-testnet.stellar.org";
 
 /// Fee used for read-only `simulateTransaction` envelopes.
@@ -199,6 +236,7 @@ pub struct AppState {
     inner: Arc<ArcSwap<Snapshot>>,
     pub config: Arc<Config>,
     pub metrics: PrometheusHandle,
+    pub abi: Arc<AbiExpectation>,
 }
 
 impl AppState {
@@ -207,6 +245,7 @@ impl AppState {
             inner: Arc::new(ArcSwap::from(Arc::new(Snapshot::default()))),
             config: Arc::new(config),
             metrics,
+            abi: Arc::new(AbiExpectation::default_ranges()),
         }
     }
 
@@ -259,6 +298,7 @@ impl AppState {
             inner: Arc::new(ArcSwap::from(Arc::new(Snapshot::default()))),
             config: Arc::new(config),
             metrics,
+            abi: Arc::new(AbiExpectation::default_ranges()),
         }
     }
 
@@ -294,11 +334,11 @@ pub enum IndexError {
         retry_after: Option<Duration>,
         body: String,
     },
-    #[error("{contract} ABI version {actual} does not match expected {expected}")]
+    #[error("{contract} ABI version {actual} is not in supported range {expected_range}")]
     AbiVersion {
         contract: String,
         actual: u64,
-        expected: u64,
+        expected_range: String,
     },
 }
 
@@ -816,8 +856,10 @@ impl Indexer {
     async fn refresh(&self) -> Result<usize, IndexError> {
         let cfg = &self.state.config;
 
-        self.check_abi(&cfg.registry_id).await?;
-        self.check_abi(&cfg.dividend_id).await?;
+        self.check_abi(&cfg.registry_id, &self.state.abi.registry, "registry")
+            .await?;
+        self.check_abi(&cfg.dividend_id, &self.state.abi.dividend, "dividend")
+            .await?;
 
         let entries_read = self
             .rpc
@@ -840,7 +882,12 @@ impl Indexer {
         let mut tvl: i128 = 0;
 
         for raw in &raw_entries {
-            self.check_abi(&raw.token_contract).await?;
+            self.check_abi(
+                &raw.token_contract,
+                &self.state.abi.asset_token,
+                "asset-token",
+            )
+            .await?;
             // ── per-asset metadata + compliance reads (best-effort) ───────────
             // A failure here is recorded and the asset is emitted with its
             // previous data (if any) plus an `index_error`.  This mirrors the
@@ -926,7 +973,12 @@ impl Indexer {
 
             let total_supply = parse_i128(&meta.total_supply);
             let valuation = parse_i128(&raw.valuation);
-            self.check_abi(&meta.compliance_contract).await?;
+            self.check_abi(
+                &meta.compliance_contract,
+                &self.state.abi.compliance,
+                "compliance",
+            )
+            .await?;
 
             // Holders: every allowlisted address with a positive balance.
             // Also best-effort: fall back to previous holders on failure.
@@ -1138,14 +1190,27 @@ impl Indexer {
         Ok((holders, summary, records))
     }
 
-    async fn check_abi(&self, contract: &str) -> Result<(), IndexError> {
+    async fn check_abi(
+        &self,
+        contract: &str,
+        range: &std::ops::RangeInclusive<u64>,
+        label: &str,
+    ) -> Result<(), IndexError> {
         let read = self.rpc.read(contract, "version", vec![]).await?;
         let actual = read.value.as_u64().unwrap_or_default();
-        if actual != EXPECTED_ABI_VERSION {
+        tracing::info!(
+            contract,
+            label,
+            version = actual,
+            supported_min = range.start(),
+            supported_max = range.end(),
+            "ABI version check"
+        );
+        if !range.contains(&actual) {
             return Err(IndexError::AbiVersion {
                 contract: contract.to_string(),
                 actual,
-                expected: EXPECTED_ABI_VERSION,
+                expected_range: format!("{}..={}", range.start(), range.end()),
             });
         }
         Ok(())
@@ -2254,5 +2319,156 @@ mod tests {
             served.dividends.contains_key(&7),
             "last good dividends must survive a failed read"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // #455 – per-contract ABI version ranges
+    // -------------------------------------------------------------------------
+
+    /// `AbiExpectation::default_ranges` must accept each contract's current
+    /// version from `stellar-rwa-contracts` main:
+    ///   registry = 1, compliance = 1, asset-token = 1, dividend = 3.
+    #[test]
+    fn default_abi_ranges_accept_current_contract_versions() {
+        let exp = AbiExpectation::default_ranges();
+        assert!(
+            exp.registry.contains(&1),
+            "registry VERSION 1 must be in default range {:?}",
+            exp.registry
+        );
+        assert!(
+            exp.compliance.contains(&1),
+            "compliance VERSION 1 must be in default range {:?}",
+            exp.compliance
+        );
+        assert!(
+            exp.asset_token.contains(&1),
+            "asset-token VERSION 1 must be in default range {:?}",
+            exp.asset_token
+        );
+        // dividend is already at VERSION 3 on main — the whole point of this fix.
+        assert!(
+            exp.dividend.contains(&3),
+            "dividend VERSION 3 must be in default range {:?}",
+            exp.dividend
+        );
+    }
+
+    /// An ABI version inside the range must not produce an error.
+    #[tokio::test]
+    async fn check_abi_accepts_version_within_range() {
+        // Serve a contract that returns version 3 — the dividend contract's
+        // current version on main.
+        let router = axum::Router::new().route(
+            "/",
+            axum::routing::post(|| async {
+                axum::Json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "results": [{ "xdr": stellar_xdr::curr::ScVal::U64(3)
+                            .to_xdr_base64(stellar_xdr::curr::Limits::none())
+                            .unwrap() }],
+                        "latestLedger": 100
+                    }
+                }))
+            }),
+        );
+        let url = spawn_rpc_stub(router).await;
+        let rpc = Rpc::new(url, STUB_SOURCE.to_string());
+        let indexer = Indexer {
+            rpc,
+            state: AppState::for_test_empty(),
+            dividend_cache: Mutex::new(HashMap::new()),
+        };
+
+        let result = indexer
+            .check_abi(STUB_CONTRACT, &(1..=3), "dividend")
+            .await;
+        assert!(
+            result.is_ok(),
+            "version 3 within range 1..=3 should be accepted; got {:?}",
+            result
+        );
+    }
+
+    /// An ABI version outside the range must produce an `AbiVersion` error
+    /// that names the contract and the unsupported version.
+    #[tokio::test]
+    async fn check_abi_rejects_version_outside_range() {
+        // A future dividend contract returning VERSION 99 — unknown to this indexer.
+        let router = axum::Router::new().route(
+            "/",
+            axum::routing::post(|| async {
+                axum::Json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "results": [{ "xdr": stellar_xdr::curr::ScVal::U64(99)
+                            .to_xdr_base64(stellar_xdr::curr::Limits::none())
+                            .unwrap() }],
+                        "latestLedger": 100
+                    }
+                }))
+            }),
+        );
+        let url = spawn_rpc_stub(router).await;
+        let rpc = Rpc::new(url, STUB_SOURCE.to_string());
+        let indexer = Indexer {
+            rpc,
+            state: AppState::for_test_empty(),
+            dividend_cache: Mutex::new(HashMap::new()),
+        };
+
+        let err = indexer
+            .check_abi(STUB_CONTRACT, &(1..=3), "dividend")
+            .await
+            .expect_err("version 99 must be rejected");
+
+        let IndexError::AbiVersion {
+            contract,
+            actual,
+            expected_range,
+        } = err
+        else {
+            panic!("expected AbiVersion error, got {err}");
+        };
+        assert_eq!(contract, STUB_CONTRACT, "error must name the contract");
+        assert_eq!(actual, 99, "error must report the observed version");
+        assert!(
+            expected_range.contains("1") && expected_range.contains("3"),
+            "error message must include the supported range; got {expected_range:?}"
+        );
+    }
+
+    /// Each contract type is checked against its own range, not a shared constant.
+    /// Verify that the ranges are genuinely independent.
+    #[test]
+    fn abi_ranges_are_independent_per_contract_type() {
+        let exp = AbiExpectation::default_ranges();
+
+        // dividend supports up to 3, so version 2 must also be accepted.
+        assert!(exp.dividend.contains(&2));
+
+        // registry and compliance are currently pinned to 1; version 2 is
+        // not yet supported and must NOT be in the range.
+        assert!(
+            !exp.registry.contains(&2),
+            "registry version 2 should not be in range yet"
+        );
+        assert!(
+            !exp.compliance.contains(&2),
+            "compliance version 2 should not be in range yet"
+        );
+        assert!(
+            !exp.asset_token.contains(&2),
+            "asset-token version 2 should not be in range yet"
+        );
+
+        // A version of 0 is never valid for any contract.
+        assert!(!exp.registry.contains(&0));
+        assert!(!exp.dividend.contains(&0));
+        assert!(!exp.compliance.contains(&0));
+        assert!(!exp.asset_token.contains(&0));
     }
 }
