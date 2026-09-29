@@ -33,6 +33,35 @@ curl "$API_BASE_URL/v1/holders/$ADDRESS/position"
 }
 ```
 
+**Response schema** (`HolderPosition`):
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `address` | string | — | No | Holder account address |
+| `asset_count` | integer | Assets | No | Number of returned positions |
+| `total_value_usd` | number | USD | No | Sum of position values |
+| `positions` | `PositionEntry[]` | One entry per asset | No | Positions are sorted by balance, largest first |
+
+`PositionEntry` fields:
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `asset_id` | integer | Registry id | No | |
+| `asset_name` | string | — | No | |
+| `symbol` | string | — | No | Asset-token symbol |
+| `balance` | string | Asset-token base units | No | Exact balance as a decimal string |
+| `share_percent` | number | Percent | No | Share of total supply |
+| `value_usd` | number | USD | No | Estimated value of the position |
+| `claimable` | `Claimable[]` | One entry per open distribution | No | Estimated claim amounts |
+
+`Claimable` fields:
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `distribution_id` | integer | Distribution id | No | |
+| `payment_token` | string | — | No | Payment-token contract address |
+| `amount` | string | Payment-token base units | No | Estimated unclaimed amount as a decimal string |
+
 - `value_usd` is the holder's `share_percent` of the asset valuation.
 - `claimable` lists each open distribution with the holder's pro-rata share
   (`balance / total_supply`) of the unclaimed pool, in payment-token base units.

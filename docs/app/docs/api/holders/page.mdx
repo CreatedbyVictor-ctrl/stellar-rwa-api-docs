@@ -29,13 +29,13 @@ the indexer derives this from the allowlist intersected with balances.
 | `offset` | integer | Skip the first N holders. Default: `0`. |
 | `limit` | integer | Page size. Default: `50`; maximum: `100`. |
 
-**Response schema** (per holder):
+**Response schema** (`Holder`, per holder):
 
-| Field | Type | Notes |
-|-------|------|-------|
-| `address` | string | Holder account |
-| `balance` | string | Base units (`i128`) |
-| `share_percent` | number | Percent of total supply, 0–100 (2 dp) |
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `address` | string | — | No | Holder account address |
+| `balance` | string | Asset-token base units | No | Exact balance (`i128` serialized as a decimal string) |
+| `share_percent` | number | Percent | No | Share of total supply, 0–100 |
 
 **Example**
 

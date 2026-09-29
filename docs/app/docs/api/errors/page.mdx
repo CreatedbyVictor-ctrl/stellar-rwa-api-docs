@@ -16,10 +16,10 @@ JSON shape and an `application/json` content type:
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `error` | string | Stable, machine-readable code. Branch on this. |
-| `message` | string | Human-readable explanation. Do not parse it. |
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `error` | string | — | No | Stable, machine-readable code. Branch on this. |
+| `message` | string | — | No | Human-readable explanation. Do not parse it. |
 
 The body contains exactly these two fields. Headers such as `Retry-After` are
 preserved on the response.
