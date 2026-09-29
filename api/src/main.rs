@@ -36,6 +36,14 @@ async fn main() {
         "starting stellar-rwa-api"
     );
 
+    // Issue #432 — probe configured contract ids at startup and warn loudly
+    // if any do not resolve. Startup continues regardless so a transient RPC
+    // hiccup or an incorrect env var does not prevent the process from
+    // starting; the warnings are actionable without being fatal.
+    for warning in indexer::probe_contract_ids(&config).await {
+        tracing::warn!(warning, "contract id probe failed at startup");
+    }
+
     let metrics_handle = PrometheusBuilder::new()
         .install_recorder()
         .expect("failed to install Prometheus recorder");
