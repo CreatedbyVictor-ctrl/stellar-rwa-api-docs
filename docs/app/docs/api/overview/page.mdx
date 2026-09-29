@@ -2,9 +2,12 @@ export const metadata = {
   title: "API Overview",
   description: "How the read-only Stellar RWA indexing API works, and its conventions.",
   canonical: "/docs/api/overview",
+  lastReviewed: "2026-09-28",
 };
 
 # API Overview
+
+<LastReviewed date={metadata.lastReviewed} />
 
 The Stellar RWA API is a **read-only** REST service that indexes all tokenized
 asset activity on Stellar and serves it as JSON. It is written in Rust (Axum +
@@ -42,9 +45,13 @@ ledger directly before acting on it. See
 ## How indexing works
 
 A background task polls **Soroban RPC** every 10 seconds. On each tick it reads the
-current state of the four contracts by *simulating* view calls — `get_all_assets`
+current state of the four contracts by *simulating* view calls — `simulateTransaction`
+is the Soroban RPC method that runs a contract function read-only, without submitting
+a transaction to the network. It calls `get_all_assets`
 on the registry, then per-asset `get_metadata`, `get_allowlist`, `balance` and
-`get_distributions_for_asset` — and rebuilds an in-memory snapshot. For the full
+`get_distributions_for_asset` — and rebuilds an in-memory snapshot. The results are
+decoded from `ScVal` (Stellar Contract Value — the binary format Soroban uses to
+return data from contracts). For the full
 polling model and what it means for data freshness, see
 [How the indexer rebuilds state](/docs/architecture#how-the-indexer-rebuilds-state).
 
@@ -254,10 +261,73 @@ These are **breaking** and will only ship under a new prefix (`/v2`):
 <ApiEndpoint method="GET" path="/assets/:id/holders" description="Holder list with balances." />
 <ApiEndpoint method="GET" path="/assets/:id/compliance" description="Non-PII compliance summary." />
 <ApiEndpoint method="GET" path="/holders/:address" description="All assets held by a Stellar address." />
+<ApiEndpoint method="GET" path="/holders/:address/compliance" description="Compliance status across assets held by an address." />
+<ApiEndpoint method="GET" path="/holders/:address/position" description="Positions and estimated claimable dividends for an address." />
 <ApiEndpoint method="GET" path="/compliance/:address" description="Address compliance view across held assets." />
 <ApiEndpoint method="GET" path="/assets/:id/dividends" description="Distribution history." />
 
-Plus `GET /` (self-describing index) and `GET /health` (liveness).
+Plus `GET /` (self-describing index), `GET /version` (server version), and `GET /health` (readiness probe — see below).
+
+## Health endpoint
+
+`GET /health` reports the liveness and readiness of the API. It is the right probe to use for deciding whether the service can serve useful data.
+
+| HTTP status | `"status"` field | Meaning |
+|-------------|-----------------|---------|
+| `200 OK` | `"ok"` | The indexer is polling normally and the snapshot is fresh. |
+| `503 Service Unavailable` | `"degraded"` | The snapshot is stale — no successful poll within the last `max_age_seconds`. |
+
+The `503` condition fires in two situations:
+1. **Before the first successful poll.** The API process is alive but has not yet indexed any data. It can accept requests but cannot return useful results. This makes `GET /health` behave like a **readiness probe**, not just a liveness probe — use it to delay traffic until the first snapshot is ready.
+2. **After an extended RPC outage.** If the indexer fails to poll for longer than `max_age_seconds` (default: 30 seconds — three poll intervals), the health status flips to `degraded` and stale headers are added to every response.
+
+**Suitability as a readiness probe:** Yes. Do not route traffic to a new instance until `GET /health` returns `200`. This ensures the first request served against the instance hits a populated snapshot, not an empty one.
+
+**Suitability as a liveness probe:** Use with care. Because `GET /health` returns `503` during extended RPC outages, a strict liveness probe configured on this endpoint would restart the process when the RPC is temporarily down — usually the wrong behaviour. A dedicated liveness probe at `/` (which always returns `200`) is more appropriate if you need separate liveness and readiness signals.
+
+**Example response:**
+
+```bash
+curl http://localhost:8080/health
+```
+
+```json
+{
+  "status": "ok",
+  "snapshot_age_seconds": 4,
+  "max_age_seconds": 30,
+  "consecutive_failures": 0,
+  "last_poll_at": "2026-07-09T08:43:12.101772791+00:00",
+  "last_poll_age_seconds": 4,
+  "last_indexed_ledger": 3514152,
+  "ledger_lag": 1
+}
+```
+
+For the full field reference and staleness headers, see [API · Health & Indexer Lag](/docs/api/health).
+
+### `AddressHolding` (`GET /holders/:address`)
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `address` | string | — | No | Holder account address |
+| `asset_id` | integer | Registry id | No | |
+| `asset_name` | string | — | No | |
+| `symbol` | string | — | No | Asset-token symbol |
+| `balance` | string | Asset-token base units | No | Exact balance as a decimal string |
+| `share_percent` | number | Percent | No | Share of the asset's total supply |
+
+### `AddressCompliance` (`GET /holders/:address/compliance`, `GET /compliance/:address`)
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `address` | string | — | No | Holder account address |
+| `asset_id` | integer | Registry id | No | |
+| `asset_name` | string | — | No | |
+| `symbol` | string | — | No | Asset-token symbol |
+| `balance` | string | Asset-token base units | No | Exact balance as a decimal string |
+| `status` | string | — | No | Indexed compliance status; currently `approved` for returned holders |
+| `allowed` | boolean | — | No | Indexed value; currently `true` for returned holders, not a fresh contract gate check |
 
 ## Error responses
 
@@ -313,3 +383,16 @@ can call the API directly from the browser.
 
 `total_holders` is the count of **distinct approved addresses** across all assets;
 `last_indexed_ledger` is the ledger the most recent successful refresh read from.
+
+**Response schema** (`Stats`):
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `total_assets` | integer | Assets | No | Total indexed assets |
+| `active_assets` | integer | Assets | No | Indexed assets marked active |
+| `tvl_cents` | string | USD cents | No | Exact TVL as a decimal string |
+| `tvl_usd` | number | USD | No | TVL in dollars |
+| `total_holders` | integer | Distinct addresses | No | Addresses with a positive token balance across assets |
+| `total_distributions` | integer | Distributions | No | Total indexed dividend distributions |
+| `last_indexed_ledger` | integer | Ledger sequence | No | Ledger read by the last successful full refresh |
+| `last_updated` | string | RFC 3339 timestamp | Yes | JSON `null` before a successful refresh |
