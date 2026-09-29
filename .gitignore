@@ -1,14 +1,23 @@
 # Rust
 /api/target
-api/target/
+**/*.rs.bk
 
 # Node
 node_modules
 .next
 out
-docs/.next/
-docs/out/
-docs/node_modules/
+dist
+build
+
+# Test artifacts
+__snapshots__
+*.snap
+coverage
+.nyc_output
+
+# TypeScript build info
+*.tsbuildinfo
+next-env.d.ts
 
 # Env
 .env
@@ -21,16 +30,11 @@ docs/node_modules/
 .vscode/*
 !.vscode/extensions.json
 
-# Rust backup files
-**/*.rs.bk
+# Vercel
+.vercel
 
-# Test snapshots
-**/__snapshots__/
-**/*.snap
-*.snap
-
-# Logs
-*.log
-
-# Temp directories
-tmp/
+# Package manager logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
