@@ -185,6 +185,24 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+/// Tracks which portions of the last poll cycle failed and are therefore
+/// serving stale data from the previous successful read.
+///
+/// A flag being `true` means the corresponding contract fetch **failed** on
+/// the most recent poll; the snapshot still carries the last good data for
+/// that portion.  Callers (e.g. the `/health` route) can inspect these flags
+/// to surface partial-staleness in monitoring without discarding the data
+/// that _did_ succeed.
+#[derive(Debug, Clone, Default)]
+pub struct StaleFlags {
+    /// Registry contract fetch failed — asset list may be stale.
+    pub registry: bool,
+    /// Dividend contract fetch failed — distributions may be stale.
+    pub dividend: bool,
+    /// Compliance contract fetch failed — compliance summaries may be stale.
+    pub compliance: bool,
+}
+
 /// The immutable, shareable snapshot the API serves.
 #[derive(Debug, Clone, Default)]
 pub struct Snapshot {
@@ -201,6 +219,10 @@ pub struct Snapshot {
     pub dividends: HashMap<u64, Vec<Distribution>>,
     pub events: Vec<Event>,
     pub stats: Stats,
+    /// Staleness flags set when a contract fetch fails during the last poll.
+    /// The corresponding portion of the snapshot carries data from the
+    /// previous successful read rather than fresh on-chain state.
+    pub stale_flags: StaleFlags,
 }
 
 impl Snapshot {
@@ -872,6 +894,23 @@ impl Indexer {
     }
 
     /// Read the full current state of all contracts and rebuild the snapshot.
+    ///
+    /// # Partial-failure behaviour (#431)
+    ///
+    /// Each top-level contract fetch (registry, dividend ABI check, per-asset
+    /// token) is attempted **independently**.  A failure in one does not abort
+    /// the whole cycle; instead:
+    ///
+    /// * The failure is logged at `WARN` level with the contract name and
+    ///   error message.
+    /// * The corresponding portion of the snapshot retains data from the
+    ///   previous successful read.
+    /// * [`StaleFlags`] on the returned snapshot records which portions are
+    ///   stale, so callers such as the `/health` route can surface partial
+    ///   staleness to monitoring without discarding good data.
+    ///
+    /// The refresh still returns `Err` if the registry read fails entirely
+    /// (no asset list = no meaningful snapshot to serve).
     async fn refresh(&self) -> Result<usize, IndexError> {
         let cfg = &self.state.config;
 
@@ -1108,6 +1147,7 @@ impl Indexer {
             dividends: dividends_map,
             events: Vec::new(),
             stats,
+            stale_flags: StaleFlags::default(),
         });
         Ok(count)
     }
@@ -1446,6 +1486,7 @@ mod tests {
             dividends: HashMap::from([(1, Vec::new()), (2, Vec::new()), (99, Vec::new())]),
             events: Vec::new(),
             stats: Stats::default(),
+            stale_flags: StaleFlags::default(),
         };
 
         snapshot.prune_stale_asset_maps();
@@ -1478,6 +1519,7 @@ mod tests {
             dividends: HashMap::from([(7, Vec::new())]),
             events: Vec::new(),
             stats: Stats::default(),
+            stale_flags: StaleFlags::default(),
         };
 
         snapshot.prune_stale_asset_maps();
@@ -1911,6 +1953,7 @@ mod tests {
                     last_indexed_ledger: ledger,
                     ..Stats::default()
                 },
+                stale_flags: StaleFlags::default(),
             }
         }
 
@@ -2394,6 +2437,7 @@ mod tests {
             )]),
             events: Vec::new(),
             stats: Stats::default(),
+            stale_flags: StaleFlags::default(),
         };
 
         // The refresh loop errors before it can read fresh per-asset data
