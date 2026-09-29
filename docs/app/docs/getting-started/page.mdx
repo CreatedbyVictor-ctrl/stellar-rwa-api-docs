@@ -2,9 +2,12 @@ export const metadata = {
   title: "Getting Started",
   description: "What the Stellar RWA Toolkit is, how asset tokenization works, and how to run it.",
   canonical: "/docs/getting-started",
+  lastReviewed: "2026-09-28",
 };
 
 # Getting Started
+
+<LastReviewed date={metadata.lastReviewed} />
 
 The **Stellar RWA Toolkit** is an end-to-end system for tokenizing real-world
 assets (RWAs) — real estate, invoices, commodities — on Stellar using Soroban
@@ -295,7 +298,8 @@ Test SDF Network ; September 2015
 ```
 
 Point Freighter at Testnet and fund your account with the
-[friendbot](https://friendbot.stellar.org) before interacting.
+[Stellar Laboratory account creator](https://laboratory.stellar.org/account-creator)
+before interacting.
 
 <CalloutBox variant="warning">
 These contracts are deployed on Testnet for demonstration. Do not use them to
@@ -324,14 +328,32 @@ read-only simulations do not submit transactions; deployments and writes do incu
 Mainnet fees. See the [Integration Guide](/docs/integration) for the
 simulate-and-assemble flow.
 
-## Deployed contract addresses (Testnet)
+## How to verify this yourself
+
+Open any contract in [Stellar Expert](https://stellar.expert/explorer/testnet) to
+check its Testnet deployment and on-chain activity:
 
 | Contract    | Contract ID |
 |-------------|-------------|
-| compliance  | `CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU` |
-| asset-token | `CBMCWLSQSWUTLUJFCNBHNBSXMUM3XU7NAQ5TSNERW4HA4ZZBYHLG4ECZ` |
-| registry    | `CBX5SMLTXX6JP4HA5GQIO2V6QM7WCUGL2GZ6D4U773HMRI6RXISKPUR3` |
-| dividend    | `CAR4XY3CEBQWFOL27JEWFW34KXSIZA7RFKDQMEIV7ZU723RWY37I2SYX` |
+| compliance  | [`CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU`](https://stellar.expert/explorer/testnet/contract/CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU) |
+| asset-token | [`CBMCWLSQSWUTLUJFCNBHNBSXMUM3XU7NAQ5TSNERW4HA4ZZBYHLG4ECZ`](https://stellar.expert/explorer/testnet/contract/CBMCWLSQSWUTLUJFCNBHNBSXMUM3XU7NAQ5TSNERW4HA4ZZBYHLG4ECZ) |
+| registry    | [`CBX5SMLTXX6JP4HA5GQIO2V6QM7WCUGL2GZ6D4U773HMRI6RXISKPUR3`](https://stellar.expert/explorer/testnet/contract/CBX5SMLTXX6JP4HA5GQIO2V6QM7WCUGL2GZ6D4U773HMRI6RXISKPUR3) |
+| dividend    | [`CAR4XY3CEBQWFOL27JEWFW34KXSIZA7RFKDQMEIV7ZU723RWY37I2SYX`](https://stellar.expert/explorer/testnet/contract/CAR4XY3CEBQWFOL27JEWFW34KXSIZA7RFKDQMEIV7ZU723RWY37I2SYX) |
+
+You can also call a read-only view on the registry with the Stellar CLI:
+
+```bash
+stellar contract invoke \
+  --contract-id CBX5SMLTXX6JP4HA5GQIO2V6QM7WCUGL2GZ6D4U773HMRI6RXISKPUR3 \
+  --source-account GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  --network testnet \
+  --send no \
+  -- get_all_assets
+```
+
+`--send no` simulates the call and returns its result without signing or
+submitting a transaction. The source is a public Testnet address; you do not need
+your own wallet, secret key, or funds.
 
 The admin / issuer account for the sample deployment is
 `GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA`, and the sample asset

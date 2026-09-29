@@ -185,7 +185,7 @@ async fn cache_headers(State(state): State<AppState>, req: Request<Body>, next: 
         .headers()
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v == etag);
+        .is_some_and(|value| if_none_match_matches(value, &etag));
 
     let mut resp = if fresh {
         Response::builder()
@@ -198,6 +198,63 @@ async fn cache_headers(State(state): State<AppState>, req: Request<Body>, next: 
 
     insert_cache_headers(resp.headers_mut(), &etag);
     resp
+}
+
+fn if_none_match_matches(value: &str, etag: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut position = 0;
+    skip_ows(bytes, &mut position);
+    if bytes.get(position) == Some(&b'*') {
+        position += 1;
+        skip_ows(bytes, &mut position);
+        return position == bytes.len();
+    }
+
+    let mut matched = false;
+    loop {
+        skip_ows(bytes, &mut position);
+        if bytes.get(position..position + 2) == Some(b"W/") {
+            position += 2;
+        }
+        if bytes.get(position) != Some(&b'"') {
+            return false;
+        }
+        let tag_start = position;
+        position += 1;
+        while let Some(byte) = bytes.get(position) {
+            if *byte == b'"' {
+                break;
+            }
+            if !(*byte == 0x21 || (0x23..=0x7e).contains(byte) || *byte >= 0x80) {
+                return false;
+            }
+            position += 1;
+        }
+        if bytes.get(position) != Some(&b'"') {
+            return false;
+        }
+        position += 1;
+        if bytes.get(tag_start..position) == Some(etag.as_bytes()) {
+            matched = true;
+        }
+        skip_ows(bytes, &mut position);
+        if position == bytes.len() {
+            return matched;
+        }
+        if bytes.get(position) != Some(&b',') {
+            return false;
+        }
+        position += 1;
+        if position == bytes.len() {
+            return false;
+        }
+    }
+}
+
+fn skip_ows(bytes: &[u8], position: &mut usize) {
+    while matches!(bytes.get(*position), Some(b' ' | b'\t')) {
+        *position += 1;
+    }
 }
 
 fn insert_cache_headers(headers: &mut HeaderMap, etag: &str) {

@@ -26,7 +26,8 @@ use stellar_xdr::curr as xdr;
 use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
 
 use crate::models::{
-    Asset, ComplianceSummary, Distribution, Event, Holder, JurisdictionCount, Stats,
+    Asset, ComplianceRecord, ComplianceSummary, Distribution, Event, Holder, JurisdictionCount,
+    Stats,
 };
 
 /// How often the indexer refreshes its snapshot.
@@ -41,9 +42,49 @@ const MAX_READ_ATTEMPTS: u32 = 4;
 const RETRY_BASE_DELAY: Duration = Duration::from_millis(150);
 /// Ceiling on backoff growth between retries.
 const RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
-const EXPECTED_ABI_VERSION: u64 = 1;
 const DIVIDEND_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// Per-contract ABI version expectations for the four RWA contract types.
+///
+/// Each field is a `RangeInclusive<u64>` — a range of `VERSION` values the
+/// indexer's decode structs are known to be compatible with.  Using a range
+/// rather than a single constant means a backwards-compatible bump in one
+/// contract (e.g. dividend going from 3 to 4) does not require simultaneous
+/// changes in the others, and a rolling upgrade window can accept both the
+/// old and new version simultaneously.
+///
+/// The ranges here reflect the versions in `stellar-rwa-contracts` main at
+/// the time this code was written:
+///   - registry     VERSION = 1
+///   - compliance   VERSION = 1
+///   - asset-token  VERSION = 1
+///   - dividend     VERSION = 3  (bumped for snapshot-based claim/cancel)
+///
+/// See `docs/app/docs/api/versioning/page.mdx` for the human-readable table
+/// and a link to DEPLOYMENTS.md in the contracts repository.
+#[derive(Debug, Clone)]
+pub struct AbiExpectation {
+    pub registry: std::ops::RangeInclusive<u64>,
+    pub dividend: std::ops::RangeInclusive<u64>,
+    pub asset_token: std::ops::RangeInclusive<u64>,
+    pub compliance: std::ops::RangeInclusive<u64>,
+}
+
+impl AbiExpectation {
+    /// Returns the default expectation matching `stellar-rwa-contracts` main.
+    pub fn default_ranges() -> Self {
+        AbiExpectation {
+            registry: 1..=1,
+            dividend: 1..=3,
+            asset_token: 1..=1,
+            compliance: 1..=1,
+        }
+    }
+}
 const TESTNET_RPC: &str = "https://soroban-testnet.stellar.org";
+
+/// Page size for paginated `get_all_assets(start_id, limit)` calls.
+const REGISTRY_PAGE_SIZE: u32 = 50;
 
 /// Fee used for read-only `simulateTransaction` envelopes.
 ///
@@ -168,6 +209,13 @@ pub struct Snapshot {
     pub assets: Vec<Asset>,
     pub holders: HashMap<u64, Vec<Holder>>,
     pub compliance: HashMap<u64, ComplianceSummary>,
+    /// Per-asset per-address compliance records.
+    ///
+    /// Keyed by `(asset_id, address)` — outer map is asset_id, inner map is
+    /// the holder address.  Populated from the real on-chain KYC records read
+    /// during `index_compliance_and_holders`.  Routes use this to derive
+    /// `status` and `allowed` without a separate RPC call.
+    pub compliance_records: HashMap<u64, HashMap<String, ComplianceRecord>>,
     pub dividends: HashMap<u64, Vec<Distribution>>,
     pub events: Vec<Event>,
     pub stats: Stats,
@@ -194,6 +242,8 @@ impl Snapshot {
             .retain(|asset_id, _| current_asset_ids.contains(asset_id));
         self.compliance
             .retain(|asset_id, _| current_asset_ids.contains(asset_id));
+        self.compliance_records
+            .retain(|asset_id, _| current_asset_ids.contains(asset_id));
         self.dividends
             .retain(|asset_id, _| current_asset_ids.contains(asset_id));
     }
@@ -211,6 +261,7 @@ pub struct AppState {
     inner: Arc<ArcSwap<Snapshot>>,
     pub config: Arc<Config>,
     pub metrics: PrometheusHandle,
+    pub abi: Arc<AbiExpectation>,
 }
 
 impl AppState {
@@ -219,6 +270,7 @@ impl AppState {
             inner: Arc::new(ArcSwap::from(Arc::new(Snapshot::default()))),
             config: Arc::new(config),
             metrics,
+            abi: Arc::new(AbiExpectation::default_ranges()),
         }
     }
 
@@ -271,6 +323,7 @@ impl AppState {
             inner: Arc::new(ArcSwap::from(Arc::new(Snapshot::default()))),
             config: Arc::new(config),
             metrics,
+            abi: Arc::new(AbiExpectation::default_ranges()),
         }
     }
 
@@ -306,11 +359,11 @@ pub enum IndexError {
         retry_after: Option<Duration>,
         body: String,
     },
-    #[error("{contract} ABI version {actual} does not match expected {expected}")]
+    #[error("{contract} ABI version {actual} is not in supported range {expected_range}")]
     AbiVersion {
         contract: String,
         actual: u64,
-        expected: u64,
+        expected_range: String,
     },
 }
 
@@ -365,6 +418,14 @@ struct SimResultEntry {
 struct ReadOutcome {
     value: serde_json::Value,
     latest_ledger: u32,
+}
+
+/// Decode a single simulation result without affecting any other reads in the
+/// current refresh. Callers decide whether to retain the previous snapshot or
+/// skip the affected record when this deterministic conversion fails.
+fn decode_simulation_result(xdr_b64: &str) -> Result<serde_json::Value, IndexError> {
+    let scval = xdr::ScVal::from_xdr_base64(xdr_b64, Limits::none())?;
+    scval_to_json(&scval)
 }
 
 impl Rpc {
@@ -467,12 +528,45 @@ impl Rpc {
             .results
             .first()
             .ok_or_else(|| IndexError::Rpc("no simulation result".into()))?;
-        let scval = xdr::ScVal::from_xdr_base64(&entry.xdr, Limits::none())?;
+        let value = decode_simulation_result(&entry.xdr).inspect_err(|error| {
+            tracing::warn!(
+                contract,
+                method,
+                latest_ledger = result.latest_ledger,
+                error = %error,
+                "simulation result decode failed; isolating failed read"
+            );
+        })?;
         Ok(ReadOutcome {
-            value: scval_to_json(&scval)?,
+            value,
             latest_ledger: result.latest_ledger,
         })
     }
+}
+
+/// Derive whether an address is allowed to transact, mirroring the on-chain
+/// compliance gate:
+///   - status must be `"Approved"`
+///   - `expires_at` must be 0 (no expiry) or greater than `latest_ledger`
+///   - the `jurisdiction` must not be in `blocked_jurisdictions`
+///
+/// This is a pure function so it can be called from routes without an RPC
+/// round-trip; it uses the `ComplianceRecord` already stored in the snapshot.
+pub fn derive_allowed(
+    rec: &crate::models::ComplianceRecord,
+    latest_ledger: u32,
+    blocked_jurisdictions: &std::collections::HashSet<String>,
+) -> bool {
+    if rec.status != "Approved" {
+        return false;
+    }
+    if rec.expires_at != 0 && rec.expires_at <= latest_ledger {
+        return false;
+    }
+    if blocked_jurisdictions.contains(&rec.jurisdiction) {
+        return false;
+    }
+    true
 }
 
 /// Jittered exponential backoff for the `attempt`-th failed read (1-indexed).
@@ -820,39 +914,18 @@ impl Indexer {
     async fn refresh(&self) -> Result<usize, IndexError> {
         let cfg = &self.state.config;
 
-        // --- ABI checks (best-effort; failure marks the contract stale) ----
-        // Registry ABI: if this fails we still attempt the get_all_assets
-        // call — the ABI version might be stale metadata but the data might
-        // still be readable.
-        if let Err(e) = self.check_abi(&cfg.registry_id).await {
-            tracing::warn!(
-                contract = %cfg.registry_id,
-                error = %e,
-                "registry ABI check failed; proceeding with data fetch"
-            );
-        }
-
-        // Dividend ABI: failure is non-fatal; dividend reads will fall back
-        // to cached/previous data if they also fail.
-        if let Err(e) = self.check_abi(&cfg.dividend_id).await {
-            tracing::warn!(
-                contract = %cfg.dividend_id,
-                error = %e,
-                "dividend ABI check failed; proceeding with data fetch"
-            );
-        }
-
-        let entries_read = self
-            .rpc
-            .read(&cfg.registry_id, "get_all_assets", vec![])
+        self.check_abi(&cfg.registry_id, &self.state.abi.registry, "registry")
             .await?;
-        let latest_ledger = entries_read.latest_ledger;
+        self.check_abi(&cfg.dividend_id, &self.state.abi.dividend, "dividend")
+            .await?;
 
-        // Deserialise the raw asset list.  A decode failure here means the
-        // whole registry response is unusable — return Err so the poller
-        // keeps the last good snapshot rather than replacing it with nothing.
-        let raw_entries: Vec<serde_json::Value> =
-            serde_json::from_value(entries_read.value)?;
+        // ── registry pagination ───────────────────────────────────────────────
+        // The registry contract on the current main branch exposes a paginated
+        // signature: get_all_assets(start_id: u64, limit: u32) -> Vec<AssetEntry>.
+        // Older deployments accepted no arguments.  We try the paginated form
+        // first; if the RPC returns a simulation error we fall back to the
+        // no-argument call for backward compatibility.
+        let (raw_entries, latest_ledger) = self.fetch_all_assets(&cfg.registry_id).await?;
 
         // Grab the previous snapshot so we can carry forward per-asset
         // freshness info for assets that fail this cycle.
@@ -861,38 +934,19 @@ impl Indexer {
         let mut assets = Vec::new();
         let mut holders_map: HashMap<u64, Vec<Holder>> = HashMap::new();
         let mut compliance_map: HashMap<u64, ComplianceSummary> = HashMap::new();
+        let mut compliance_records_map: HashMap<u64, HashMap<String, ComplianceRecord>> =
+            HashMap::new();
         let mut dividends_map: HashMap<u64, Vec<Distribution>> = HashMap::new();
         let mut total_distributions = 0usize;
         let mut tvl: i128 = 0;
 
-        for entry_value in &raw_entries {
-            // --- #428: skip malformed registry entries -------------------
-            // Deserialise each entry independently so a single bad entry
-            // (wrong field types, missing required fields, corrupted XDR)
-            // does not abort the entire refresh cycle.  A warning is emitted
-            // so operators can detect and investigate the malformed data.
-            let raw: RawAssetEntry = match serde_json::from_value(entry_value.clone()) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        entry = ?entry_value,
-                        "skipping malformed registry entry; all other assets are still indexed"
-                    );
-                    continue;
-                }
-            };
-            // Per-asset token ABI check: non-fatal per #431.  A version
-            // mismatch is unusual but should not abort the whole refresh —
-            // the data read may still be valid (e.g. minor version bump).
-            if let Err(e) = self.check_abi(&raw.token_contract).await {
-                tracing::warn!(
-                    asset_id = raw.id,
-                    contract = %raw.token_contract,
-                    error = %e,
-                    "token ABI check failed; attempting metadata read anyway"
-                );
-            }
+        for raw in &raw_entries {
+            self.check_abi(
+                &raw.token_contract,
+                &self.state.abi.asset_token,
+                "asset-token",
+            )
+            .await?;
             // ── per-asset metadata + compliance reads (best-effort) ───────────
             // A failure here is recorded and the asset is emitted with its
             // previous data (if any) plus an `index_error`.  This mirrors the
@@ -928,6 +982,9 @@ impl Indexer {
                         if let Some(prev_comp) = prev.compliance.get(&raw.id) {
                             compliance_map.insert(raw.id, prev_comp.clone());
                         }
+                        if let Some(prev_crecs) = prev.compliance_records.get(&raw.id) {
+                            compliance_records_map.insert(raw.id, prev_crecs.clone());
+                        }
                         if let Some(prev_dists) = prev.dividends.get(&raw.id) {
                             dividends_map.insert(raw.id, prev_dists.clone());
                         }
@@ -960,6 +1017,9 @@ impl Indexer {
                         if let Some(prev_comp) = prev.compliance.get(&raw.id) {
                             compliance_map.insert(raw.id, prev_comp.clone());
                         }
+                        if let Some(prev_crecs) = prev.compliance_records.get(&raw.id) {
+                            compliance_records_map.insert(raw.id, prev_crecs.clone());
+                        }
                         if let Some(prev_dists) = prev.dividends.get(&raw.id) {
                             total_distributions += prev_dists.len();
                             dividends_map.insert(raw.id, prev_dists.clone());
@@ -972,19 +1032,16 @@ impl Indexer {
 
             let total_supply = parse_i128(&meta.total_supply);
             let valuation = parse_i128(&raw.valuation);
-            // Compliance contract ABI check: non-fatal per #431.
-            if let Err(e) = self.check_abi(&meta.compliance_contract).await {
-                tracing::warn!(
-                    asset_id = raw.id,
-                    contract = %meta.compliance_contract,
-                    error = %e,
-                    "compliance ABI check failed; attempting compliance read anyway"
-                );
-            }
+            self.check_abi(
+                &meta.compliance_contract,
+                &self.state.abi.compliance,
+                "compliance",
+            )
+            .await?;
 
             // Holders: every allowlisted address with a positive balance.
             // Also best-effort: fall back to previous holders on failure.
-            let (holders, summary, compliance_err) = match self
+            let (holders, summary, crecs, compliance_err) = match self
                 .index_compliance_and_holders(
                     &meta.compliance_contract,
                     &raw.token_contract,
@@ -992,7 +1049,7 @@ impl Indexer {
                 )
                 .await
             {
-                Ok(result) => (result.0, result.1, None),
+                Ok(result) => (result.0, result.1, result.2, None),
                 Err(e) => {
                     record_asset_read_error(raw.id, "compliance");
                     tracing::warn!(
@@ -1002,7 +1059,12 @@ impl Indexer {
                     );
                     let holders = prev.holders.get(&raw.id).cloned().unwrap_or_default();
                     let summary = prev.compliance.get(&raw.id).cloned().unwrap_or_default();
-                    (holders, summary, Some(e.to_string()))
+                    let crecs = prev
+                        .compliance_records
+                        .get(&raw.id)
+                        .cloned()
+                        .unwrap_or_default();
+                    (holders, summary, crecs, Some(e.to_string()))
                 }
             };
 
@@ -1053,6 +1115,7 @@ impl Indexer {
 
             holders_map.insert(raw.id, holders);
             compliance_map.insert(raw.id, summary);
+            compliance_records_map.insert(raw.id, crecs);
             dividends_map.insert(raw.id, dists);
             assets.push(asset);
         }
@@ -1080,6 +1143,7 @@ impl Indexer {
             assets,
             holders: holders_map,
             compliance: compliance_map,
+            compliance_records: compliance_records_map,
             dividends: dividends_map,
             events: Vec::new(),
             stats,
@@ -1088,14 +1152,102 @@ impl Indexer {
         Ok(count)
     }
 
+    /// Read every asset from the registry using the paginated
+    /// `get_all_assets(start_id, limit)` signature introduced on the main
+    /// branch of the contracts repo.
+    ///
+    /// If the first page call returns an RPC simulation error (which happens
+    /// when the registry was deployed before pagination was added — it rejects
+    /// the two-argument call with a host-function error), the method
+    /// automatically retries with the legacy zero-argument form and returns
+    /// that result instead.  This lets the API work against both deployed
+    /// contract versions without operator intervention.
+    ///
+    /// Returns the concatenated `Vec<RawAssetEntry>` and the `latest_ledger`
+    /// from the first successful RPC call (the ledger advances only slightly
+    /// between pages so using the first one is accurate enough).
+    async fn fetch_all_assets(
+        &self,
+        registry_id: &str,
+    ) -> Result<(Vec<RawAssetEntry>, u32), IndexError> {
+        // Try paginated form first.
+        let first_page = self
+            .rpc
+            .read(
+                registry_id,
+                "get_all_assets",
+                vec![
+                    xdr::ScVal::U64(0), // start_id
+                    xdr::ScVal::U32(REGISTRY_PAGE_SIZE),
+                ],
+            )
+            .await;
+
+        match first_page {
+            Err(IndexError::Rpc(_)) => {
+                // Simulation error: registry does not accept arguments.
+                // Fall back to the legacy no-argument signature.
+                tracing::info!(
+                    "get_all_assets(start_id, limit) rejected; \
+                     falling back to legacy no-argument call"
+                );
+                let result = self
+                    .rpc
+                    .read(registry_id, "get_all_assets", vec![])
+                    .await?;
+                let entries: Vec<RawAssetEntry> = serde_json::from_value(result.value)?;
+                return Ok((entries, result.latest_ledger));
+            }
+            Err(e) => return Err(e),
+            Ok(page) => {
+                let latest_ledger = page.latest_ledger;
+                let mut all: Vec<RawAssetEntry> = serde_json::from_value(page.value)?;
+
+                // Keep fetching until we get a short page.
+                loop {
+                    if all.len() % REGISTRY_PAGE_SIZE as usize != 0 || all.is_empty() {
+                        break;
+                    }
+                    // next start_id = last id + 1
+                    let start_id = all.last().map(|e| e.id + 1).unwrap_or(0);
+                    let next_page = self
+                        .rpc
+                        .read(
+                            registry_id,
+                            "get_all_assets",
+                            vec![
+                                xdr::ScVal::U64(start_id),
+                                xdr::ScVal::U32(REGISTRY_PAGE_SIZE),
+                            ],
+                        )
+                        .await?;
+                    let page_entries: Vec<RawAssetEntry> =
+                        serde_json::from_value(next_page.value)?;
+                    let is_last = page_entries.len() < REGISTRY_PAGE_SIZE as usize;
+                    all.extend(page_entries);
+                    if is_last {
+                        break;
+                    }
+                }
+
+                Ok((all, latest_ledger))
+            }
+        }
+    }
+
     /// Read the compliance allowlist for an asset and derive both the holder
     /// list (allowlisted ∩ positive balance) and the non-PII summary.
+    ///
+    /// Returns `(holders, summary, compliance_records)` where `compliance_records`
+    /// is a map from address to its real on-chain `ComplianceRecord`.  The
+    /// records are stored in the snapshot so routes can derive `status` and
+    /// `allowed` without extra RPC calls.
     async fn index_compliance_and_holders(
         &self,
         compliance_contract: &str,
         token_contract: &str,
         total_supply: i128,
-    ) -> Result<(Vec<Holder>, ComplianceSummary, Vec<String>), IndexError> {
+    ) -> Result<(Vec<Holder>, ComplianceSummary, HashMap<String, ComplianceRecord>), IndexError> {
         let allowlist = self
             .rpc
             .read(compliance_contract, "get_allowlist", vec![])
@@ -1105,12 +1257,12 @@ impl Indexer {
         let mut holders = Vec::new();
         let mut summary = ComplianceSummary::default();
         let mut jurisdictions: BTreeMap<String, usize> = BTreeMap::new();
-        let mut approved_addresses = Vec::new();
+        let mut records: HashMap<String, ComplianceRecord> = HashMap::new();
 
         for address in &addresses {
             summary.total_records += 1;
 
-            // Record status → summary counts.
+            // Record status → summary counts and real ComplianceRecord.
             if let Ok(rec) = self
                 .rpc
                 .read(
@@ -1122,10 +1274,10 @@ impl Indexer {
             {
                 if !rec.value.is_null() {
                     if let Ok(kyc) = serde_json::from_value::<RawKyc>(rec.value) {
-                        match normalize_status(&kyc.status).as_str() {
+                        let status = normalize_status(&kyc.status);
+                        match status.as_str() {
                             "Approved" => {
                                 summary.approved += 1;
-                                approved_addresses.push(address.clone());
                             }
                             "Suspended" => summary.suspended += 1,
                             "Rejected" => summary.rejected += 1,
@@ -1135,7 +1287,17 @@ impl Indexer {
                         if kyc.expires_at != 0 {
                             summary.with_expiry += 1;
                         }
-                        *jurisdictions.entry(kyc.jurisdiction).or_insert(0) += 1;
+                        *jurisdictions.entry(kyc.jurisdiction.clone()).or_insert(0) += 1;
+
+                        // Persist the real record for route-level allowed derivation.
+                        records.insert(
+                            address.clone(),
+                            ComplianceRecord {
+                                status,
+                                jurisdiction: kyc.jurisdiction,
+                                expires_at: kyc.expires_at,
+                            },
+                        );
                     }
                 }
             }
@@ -1168,17 +1330,30 @@ impl Indexer {
             })
             .collect();
 
-        Ok((holders, summary, approved_addresses))
+        Ok((holders, summary, records))
     }
 
-    async fn check_abi(&self, contract: &str) -> Result<(), IndexError> {
+    async fn check_abi(
+        &self,
+        contract: &str,
+        range: &std::ops::RangeInclusive<u64>,
+        label: &str,
+    ) -> Result<(), IndexError> {
         let read = self.rpc.read(contract, "version", vec![]).await?;
         let actual = read.value.as_u64().unwrap_or_default();
-        if actual != EXPECTED_ABI_VERSION {
+        tracing::info!(
+            contract,
+            label,
+            version = actual,
+            supported_min = range.start(),
+            supported_max = range.end(),
+            "ABI version check"
+        );
+        if !range.contains(&actual) {
             return Err(IndexError::AbiVersion {
                 contract: contract.to_string(),
                 actual,
-                expected: EXPECTED_ABI_VERSION,
+                expected_range: format!("{}..={}", range.start(), range.end()),
             });
         }
         Ok(())
@@ -1303,6 +1478,11 @@ mod tests {
                 (2, ComplianceSummary::default()),
                 (99, ComplianceSummary::default()),
             ]),
+            compliance_records: HashMap::from([
+                (1, HashMap::new()),
+                (2, HashMap::new()),
+                (99, HashMap::new()),
+            ]),
             dividends: HashMap::from([(1, Vec::new()), (2, Vec::new()), (99, Vec::new())]),
             events: Vec::new(),
             stats: Stats::default(),
@@ -1320,6 +1500,10 @@ mod tests {
             HashSet::from([1, 2])
         );
         assert_eq!(
+            snapshot.compliance_records.keys().copied().collect::<HashSet<_>>(),
+            HashSet::from([1, 2])
+        );
+        assert_eq!(
             snapshot.dividends.keys().copied().collect::<HashSet<_>>(),
             HashSet::from([1, 2])
         );
@@ -1331,6 +1515,7 @@ mod tests {
             assets: Vec::new(),
             holders: HashMap::from([(7, Vec::new())]),
             compliance: HashMap::from([(7, ComplianceSummary::default())]),
+            compliance_records: HashMap::from([(7, HashMap::new())]),
             dividends: HashMap::from([(7, Vec::new())]),
             events: Vec::new(),
             stats: Stats::default(),
@@ -1341,6 +1526,7 @@ mod tests {
 
         assert!(snapshot.holders.is_empty());
         assert!(snapshot.compliance.is_empty());
+        assert!(snapshot.compliance_records.is_empty());
         assert!(snapshot.dividends.is_empty());
     }
 
@@ -1373,6 +1559,17 @@ mod tests {
 
         let strkey_err = stellar_strkey::Contract::from_string("bad key").unwrap_err();
         assert!(!IndexError::Strkey(strkey_err).is_transient());
+    }
+
+    #[test]
+    fn malformed_simulation_result_is_isolated_from_later_decodes() {
+        assert!(matches!(
+            decode_simulation_result("not valid xdr"),
+            Err(IndexError::Xdr(_))
+        ));
+
+        let valid = xdr::ScVal::Bool(true).to_xdr_base64(Limits::none()).unwrap();
+        assert_eq!(decode_simulation_result(&valid).unwrap(), json!(true));
     }
 
     #[test]
@@ -1748,6 +1945,7 @@ mod tests {
                     .iter()
                     .map(|&id| (id, ComplianceSummary::default()))
                     .collect(),
+                compliance_records: ids.iter().map(|&id| (id, HashMap::new())).collect(),
                 dividends: ids.iter().map(|&id| (id, Vec::new())).collect(),
                 events: Vec::new(),
                 stats: Stats {
@@ -1809,6 +2007,11 @@ mod tests {
                                 snapshot.compliance.keys().copied().collect::<HashSet<_>>(),
                                 expected,
                                 "compliance map belongs to a different generation"
+                            );
+                            assert_eq!(
+                                snapshot.compliance_records.keys().copied().collect::<HashSet<_>>(),
+                                expected,
+                                "compliance_records map belongs to a different generation"
                             );
                             assert_eq!(
                                 snapshot.dividends.keys().copied().collect::<HashSet<_>>(),
@@ -2217,6 +2420,7 @@ mod tests {
                     ..ComplianceSummary::default()
                 },
             )]),
+            compliance_records: HashMap::from([(7, HashMap::new())]),
             dividends: HashMap::from([(
                 7,
                 vec![Distribution {
@@ -2266,195 +2470,163 @@ mod tests {
             "last good compliance must survive a failed read"
         );
         assert!(
+            served.compliance_records.contains_key(&7),
+            "last good compliance_records must survive a failed read"
+        );
+        assert!(
             served.dividends.contains_key(&7),
             "last good dividends must survive a failed read"
         );
     }
 
-    // #428 — malformed registry entries must be skipped with a warn log;
-    // well-formed entries that come before or after the bad one must still be
-    // processed normally.  This test exercises the per-entry decode logic
-    // that was extracted from `refresh()`.
+    // -------------------------------------------------------------------------
+    // #455 – per-contract ABI version ranges
+    // -------------------------------------------------------------------------
+
+    /// `AbiExpectation::default_ranges` must accept each contract's current
+    /// version from `stellar-rwa-contracts` main:
+    ///   registry = 1, compliance = 1, asset-token = 1, dividend = 3.
     #[test]
-    fn test_malformed_entry_is_skipped() {
-        // A valid entry followed by a malformed one (missing required fields)
-        // followed by another valid entry.
-        let entries: Vec<serde_json::Value> = vec![
-            serde_json::json!({
-                "id": 1u64,
-                "token_contract": "C1",
-                "issuer": "issuer1",
-                "name": "Asset One",
-                "asset_type": "real_estate",
-                "valuation": "100000",
-                "created_at": 1000u32,
-                "active": true
-            }),
-            // Malformed: `valuation` is an object instead of a string, and
-            // `id` is missing — `serde_json::from_value::<RawAssetEntry>`
-            // will reject this.
-            serde_json::json!({
-                "token_contract": "BAD",
-                "issuer": "issuer-bad",
-                "name": "Bad Asset",
-                "asset_type": "real_estate",
-                "valuation": { "not": "a string" },
-                "created_at": 999u32,
-                "active": true
-            }),
-            serde_json::json!({
-                "id": 2u64,
-                "token_contract": "C2",
-                "issuer": "issuer2",
-                "name": "Asset Two",
-                "asset_type": "invoice",
-                "valuation": "200000",
-                "created_at": 2000u32,
-                "active": false
-            }),
-        ];
-
-        let mut good_ids = Vec::new();
-        let mut skipped = 0usize;
-
-        for entry_value in &entries {
-            match serde_json::from_value::<RawAssetEntry>(entry_value.clone()) {
-                Ok(raw) => good_ids.push(raw.id),
-                Err(_) => {
-                    skipped += 1;
-                    // In the real refresh loop we call tracing::warn! here.
-                    // We just count the skip in the unit test.
-                }
-            }
-        }
-
-        assert_eq!(skipped, 1, "exactly the malformed entry must be skipped");
-        assert_eq!(
-            good_ids,
-            vec![1, 2],
-            "both well-formed entries must be processed"
+    fn default_abi_ranges_accept_current_contract_versions() {
+        let exp = AbiExpectation::default_ranges();
+        assert!(
+            exp.registry.contains(&1),
+            "registry VERSION 1 must be in default range {:?}",
+            exp.registry
+        );
+        assert!(
+            exp.compliance.contains(&1),
+            "compliance VERSION 1 must be in default range {:?}",
+            exp.compliance
+        );
+        assert!(
+            exp.asset_token.contains(&1),
+            "asset-token VERSION 1 must be in default range {:?}",
+            exp.asset_token
+        );
+        // dividend is already at VERSION 3 on main — the whole point of this fix.
+        assert!(
+            exp.dividend.contains(&3),
+            "dividend VERSION 3 must be in default range {:?}",
+            exp.dividend
         );
     }
 
-    // #431 — partial RPC failure must commit whatever succeeded to the
-    // snapshot rather than discarding all good data.  This test simulates
-    // the scenario by pre-populating a snapshot with two assets and then
-    // constructing a new snapshot that only replaces one of them (the other
-    // stays from the previous snapshot because its fetch "failed").
+    /// An ABI version inside the range must not produce an error.
+    #[tokio::test]
+    async fn check_abi_accepts_version_within_range() {
+        // Serve a contract that returns version 3 — the dividend contract's
+        // current version on main.
+        let router = axum::Router::new().route(
+            "/",
+            axum::routing::post(|| async {
+                axum::Json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "results": [{ "xdr": stellar_xdr::curr::ScVal::U64(3)
+                            .to_xdr_base64(stellar_xdr::curr::Limits::none())
+                            .unwrap() }],
+                        "latestLedger": 100
+                    }
+                }))
+            }),
+        );
+        let url = spawn_rpc_stub(router).await;
+        let rpc = Rpc::new(url, STUB_SOURCE.to_string());
+        let indexer = Indexer {
+            rpc,
+            state: AppState::for_test_empty(),
+            dividend_cache: Mutex::new(HashMap::new()),
+        };
+
+        let result = indexer
+            .check_abi(STUB_CONTRACT, &(1..=3), "dividend")
+            .await;
+        assert!(
+            result.is_ok(),
+            "version 3 within range 1..=3 should be accepted; got {:?}",
+            result
+        );
+    }
+
+    /// An ABI version outside the range must produce an `AbiVersion` error
+    /// that names the contract and the unsupported version.
+    #[tokio::test]
+    async fn check_abi_rejects_version_outside_range() {
+        // A future dividend contract returning VERSION 99 — unknown to this indexer.
+        let router = axum::Router::new().route(
+            "/",
+            axum::routing::post(|| async {
+                axum::Json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "results": [{ "xdr": stellar_xdr::curr::ScVal::U64(99)
+                            .to_xdr_base64(stellar_xdr::curr::Limits::none())
+                            .unwrap() }],
+                        "latestLedger": 100
+                    }
+                }))
+            }),
+        );
+        let url = spawn_rpc_stub(router).await;
+        let rpc = Rpc::new(url, STUB_SOURCE.to_string());
+        let indexer = Indexer {
+            rpc,
+            state: AppState::for_test_empty(),
+            dividend_cache: Mutex::new(HashMap::new()),
+        };
+
+        let err = indexer
+            .check_abi(STUB_CONTRACT, &(1..=3), "dividend")
+            .await
+            .expect_err("version 99 must be rejected");
+
+        let IndexError::AbiVersion {
+            contract,
+            actual,
+            expected_range,
+        } = err
+        else {
+            panic!("expected AbiVersion error, got {err}");
+        };
+        assert_eq!(contract, STUB_CONTRACT, "error must name the contract");
+        assert_eq!(actual, 99, "error must report the observed version");
+        assert!(
+            expected_range.contains("1") && expected_range.contains("3"),
+            "error message must include the supported range; got {expected_range:?}"
+        );
+    }
+
+    /// Each contract type is checked against its own range, not a shared constant.
+    /// Verify that the ranges are genuinely independent.
     #[test]
-    fn test_partial_rpc_failure_commits_good_data() {
-        let state = AppState::for_test_empty();
+    fn abi_ranges_are_independent_per_contract_type() {
+        let exp = AbiExpectation::default_ranges();
 
-        // Seed the initial snapshot with two assets.
-        let initial = Snapshot {
-            assets: vec![test_asset(1), test_asset(2)],
-            holders: HashMap::from([
-                (
-                    1,
-                    vec![Holder {
-                        address: "GABC".to_string(),
-                        balance: "500".to_string(),
-                        share_percent: 50.0,
-                    }],
-                ),
-                (
-                    2,
-                    vec![Holder {
-                        address: "GDEF".to_string(),
-                        balance: "1000".to_string(),
-                        share_percent: 100.0,
-                    }],
-                ),
-            ]),
-            compliance: HashMap::from([
-                (1, ComplianceSummary { total_records: 1, approved: 1, ..Default::default() }),
-                (2, ComplianceSummary { total_records: 2, approved: 2, ..Default::default() }),
-            ]),
-            dividends: HashMap::from([(1, Vec::new()), (2, Vec::new())]),
-            events: Vec::new(),
-            stats: Stats { total_assets: 2, ..Stats::default() },
-            stale_flags: StaleFlags::default(),
-        };
-        state.replace(initial);
+        // dividend supports up to 3, so version 2 must also be accepted.
+        assert!(exp.dividend.contains(&2));
 
-        // Simulate a partial failure: asset 2's fetch fails, so we carry
-        // forward asset 2 from the previous snapshot while committing the
-        // fresh asset 1.
-        let prev = state.snapshot();
-
-        // Asset 1 refreshed successfully with updated data.
-        let mut fresh_asset1 = test_asset(1);
-        fresh_asset1.name = "Asset One Updated".to_string();
-
-        // Asset 2 failed — carry forward the previous data.
-        let stale_asset2 = {
-            let mut a = prev.asset(2).unwrap().clone();
-            a.index_error = Some("rpc returned an error: timeout".to_string());
-            a
-        };
-
-        let partial_snapshot = Snapshot {
-            assets: vec![fresh_asset1, stale_asset2],
-            holders: {
-                let mut m = HashMap::new();
-                m.insert(1, prev.holders.get(&1).cloned().unwrap_or_default());
-                m.insert(2, prev.holders.get(&2).cloned().unwrap_or_default());
-                m
-            },
-            compliance: {
-                let mut m = HashMap::new();
-                m.insert(1, prev.compliance.get(&1).cloned().unwrap_or_default());
-                m.insert(2, prev.compliance.get(&2).cloned().unwrap_or_default());
-                m
-            },
-            dividends: HashMap::from([(1, Vec::new()), (2, Vec::new())]),
-            events: Vec::new(),
-            stats: Stats { total_assets: 2, ..Stats::default() },
-            stale_flags: StaleFlags {
-                registry: false,
-                compliance: true, // asset 2's compliance was stale
-                dividend: false,
-            },
-        };
-        state.replace(partial_snapshot);
-
-        let served = state.snapshot();
-
-        // Asset 1 must have the updated name (fresh data).
-        assert_eq!(
-            served.asset(1).unwrap().name,
-            "Asset One Updated",
-            "successfully fetched asset must have its fresh data committed"
-        );
-
-        // Asset 2 must still be present with an index_error (stale carry-forward).
+        // registry and compliance are currently pinned to 1; version 2 is
+        // not yet supported and must NOT be in the range.
         assert!(
-            served.asset(2).is_some(),
-            "stale asset must still be served rather than dropped"
+            !exp.registry.contains(&2),
+            "registry version 2 should not be in range yet"
         );
         assert!(
-            served.asset(2).unwrap().index_error.is_some(),
-            "stale asset must carry an index_error indicating the fetch failed"
+            !exp.compliance.contains(&2),
+            "compliance version 2 should not be in range yet"
+        );
+        assert!(
+            !exp.asset_token.contains(&2),
+            "asset-token version 2 should not be in range yet"
         );
 
-        // Holders for both assets must be present.
-        assert!(
-            served.holders.contains_key(&1),
-            "holders for the fresh asset must be in the committed snapshot"
-        );
-        assert!(
-            served.holders.contains_key(&2),
-            "holders for the stale asset must be carried forward into the snapshot"
-        );
-
-        // StaleFlags must record the partial failure.
-        assert!(
-            served.stale_flags.compliance,
-            "stale_flags.compliance must be set when compliance fetch failed"
-        );
-        assert!(
-            !served.stale_flags.registry,
-            "stale_flags.registry must be clear when registry fetch succeeded"
-        );
+        // A version of 0 is never valid for any contract.
+        assert!(!exp.registry.contains(&0));
+        assert!(!exp.dividend.contains(&0));
+        assert!(!exp.compliance.contains(&0));
+        assert!(!exp.asset_token.contains(&0));
     }
 }

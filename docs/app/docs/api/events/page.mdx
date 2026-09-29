@@ -2,9 +2,12 @@ export const metadata = {
   title: "API · Events",
   description: "Recent contract events emitted by the indexer.",
   canonical: "/docs/api/events",
+  lastReviewed: "2026-09-28",
 };
 
 # Events
+
+<LastReviewed date={metadata.lastReviewed} />
 
 The API exposes a compact event stream for clients that need to react to state changes without polling the full asset list. The payload is a JSON array ordered newest-first.
 
@@ -32,5 +35,16 @@ curl "$API_BASE_URL/events?limit=20"
 ```
 
 </ApiEndpoint>
+
+**Response schema** (`Event`, per event):
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `id` | integer | Event id | No | Indexer-assigned event id |
+| `contract` | string | — | No | Contract address that emitted the event |
+| `event_type` | string | — | No | Event name |
+| `ledger` | integer | Ledger sequence | No | Ledger containing the event |
+| `timestamp` | string | RFC 3339 timestamp | Yes | JSON `null` when the ledger timestamp is unavailable |
+| `data` | JSON value | — | No | Raw event payload |
 
 Each event includes the contract address, event name, ledger, timestamp (when available), and the raw payload emitted by the contract.

@@ -2,9 +2,12 @@ export const metadata = {
   title: "Snapshot Memory",
   description: "How the API's in-memory snapshot grows, what it costs per request, and the bounding strategy.",
   canonical: "/docs/snapshot-memory",
+  lastReviewed: "2026-09-26",
 };
 
 # Snapshot Memory
+
+<LastReviewed date={metadata.lastReviewed} />
 
 The indexer keeps a full snapshot (assets, holders, compliance, dividends,
 stats) in memory and rebuilds it every poll. Request handlers currently take a
