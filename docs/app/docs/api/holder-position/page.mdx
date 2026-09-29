@@ -2,9 +2,12 @@ export const metadata = {
   title: "API · Holder position",
   description: "A holder's positions and claimable amounts across all assets in one request.",
   canonical: "/docs/api/holder-position",
+  lastReviewed: "2026-09-26",
 };
 
 # Holder position
+
+<LastReviewed date={metadata.lastReviewed} />
 
 <ApiEndpoint method="GET" path="/holders/:address/position" description="Positions and claimable dividends for one address across all assets." />
 

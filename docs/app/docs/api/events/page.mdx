@@ -2,9 +2,12 @@ export const metadata = {
   title: "API · Events",
   description: "Recent contract events emitted by the indexer.",
   canonical: "/docs/api/events",
+  lastReviewed: "2026-09-28",
 };
 
 # Events
+
+<LastReviewed date={metadata.lastReviewed} />
 
 The API exposes a compact event stream for clients that need to react to state changes without polling the full asset list. The payload is a JSON array ordered newest-first.
 

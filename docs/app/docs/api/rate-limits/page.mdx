@@ -2,9 +2,12 @@ export const metadata = {
   title: "API · Rate Limits & Caching",
   description: "Rate-limit headers, ETag-based conditional requests, and Cache-Control guidance for the Stellar RWA API.",
   canonical: "/docs/api/rate-limits",
+  lastReviewed: "2026-09-27",
 };
 
 # Rate Limits & Caching
+
+<LastReviewed date={metadata.lastReviewed} />
 
 Rate limiting is keyed by client IP and uses a token bucket shared across API
 routes. Conditional requests are enabled on the `/v1` data routes.
