@@ -151,6 +151,8 @@ pub(crate) fn router_with_rate_limit(state: AppState, per_second: u64, burst: u3
     Router::new()
         .route("/", get(index))
         .route("/version", get(version))
+        .route("/health/live", get(liveness))
+        .route("/health/ready", get(readiness))
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .nest("/v1", data_routes)
@@ -288,6 +290,8 @@ async fn index() -> Json<serde_json::Value> {
             "GET /v1/holders/:address/compliance",
             "GET /v1/holders/:address/position",
             "GET /v1/compliance/:address",
+            "GET /health/live",
+            "GET /health/ready",
             "GET /health",
             "GET /metrics"
         ],
@@ -306,7 +310,34 @@ async fn version() -> Json<serde_json::Value> {
     }))
 }
 
-/// Liveness probe.
+/// Liveness probe — always returns 200 if the process is running.
+async fn liveness() -> Json<serde_json::Value> {
+    Json(json!({
+        "status": "live"
+    }))
+}
+
+/// Readiness probe — returns 200 only when at least one successful snapshot
+/// poll has completed. Returns 503 while waiting for the first poll to finish.
+async fn readiness() -> Response {
+    let has_completed_poll = crate::poll_status::last_poll_age_seconds().is_some();
+    let status = if has_completed_poll {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    let body = if has_completed_poll {
+        json!({ "status": "ready" })
+    } else {
+        json!({
+            "status": "not-ready",
+            "reason": "no-snapshot-yet"
+        })
+    };
+    (status, Json(body)).into_response()
+}
+
+/// Combined health check with detailed status.
 async fn health(State(state): State<AppState>) -> Response {
     let updated = state
         .snapshot()
@@ -424,6 +455,8 @@ mod tests {
         let app = router(AppState::for_test_empty());
 
         assert_json_content_type(app.clone(), "/", StatusCode::OK).await;
+        assert_json_content_type(app.clone(), "/health/live", StatusCode::OK).await;
+        assert_json_content_type(app.clone(), "/health/ready", StatusCode::SERVICE_UNAVAILABLE).await;
         assert_json_content_type(app.clone(), "/health", StatusCode::SERVICE_UNAVAILABLE).await;
         assert_json_content_type(app.clone(), "/version", StatusCode::OK).await;
         assert_json_content_type(app.clone(), "/v1/stats", StatusCode::OK).await;
