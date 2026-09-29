@@ -216,6 +216,268 @@ A `transfer` will revert with <code>SenderNotCompliant (7)</code> or
 error up front.
 </CalloutBox>
 
+## Testnet fixtures for compliance failure paths
+
+The scenarios below let you exercise every failure branch of the compliance gate
+on Testnet — no mainnet funds, no real KYC required. Each one uses
+`stellar contract invoke` from the [Stellar CLI](https://developers.stellar.org/docs/tools/cli)
+to set up state, then shows how to verify `is_allowed` returns `false` before
+submitting a transfer that will revert.
+
+All commands use the deployed Testnet contracts. See
+[Deployed contract addresses](/docs/getting-started#deployed-contract-addresses-testnet)
+for the full list. The admin key (`GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA`)
+holds the secret key for the sample deployment's compliance admin; substitute your
+own admin and test accounts when working against a custom deployment.
+
+**Prerequisites:** fund a fresh test account using Friendbot so it exists on the
+network before any contract call references it.
+
+```bash
+curl "https://friendbot.stellar.org?addr=<TEST_ADDRESS>"
+```
+
+<CalloutBox variant="note">
+The Stellar CLI must be configured for Testnet. Add
+<code>--network testnet</code> to every <code>stellar contract invoke</code> call,
+or set it as the default network in your CLI config.
+</CalloutBox>
+
+### Verify is_allowed before each test
+
+Run this check after setting up each fixture and again after the transfer attempt.
+A `false` result confirms the gate is in the expected state.
+
+```bash
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  -- is_allowed \
+  --address <TEST_ADDRESS>
+# expected output: false
+```
+
+---
+
+### Scenario 1 — Never approved (no record)
+
+The simplest case: the address has never been added to the allowlist. No setup
+needed beyond funding the account.
+
+**Expected error on transfer:** `RecipientNotCompliant (8)` if used as `to`;
+`SenderNotCompliant (7)` if used as `from`.
+
+```bash
+# Confirm no record exists — returns null
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  -- get_record \
+  --address <TEST_ADDRESS>
+# output: null
+```
+
+No further setup is needed. Attempt a transfer with this address as the recipient
+to see `RecipientNotCompliant (8)`.
+
+---
+
+### Scenario 2 — Suspended approval
+
+Approve the address first, then immediately suspend it. The record is retained
+with status `Suspended`; `is_allowed` returns `false`.
+
+**Expected error on transfer:** `SenderNotCompliant (7)` or `RecipientNotCompliant (8)`.
+
+```bash
+# Step 1: approve the test address
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  --source GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  -- add_to_allowlist \
+  --admin GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  --address <TEST_ADDRESS> \
+  --jurisdiction US \
+  --expires_at 0
+
+# Step 2: suspend the address
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  --source GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  -- suspend \
+  --admin GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  --address <TEST_ADDRESS>
+
+# Verify — should return false
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  -- is_allowed \
+  --address <TEST_ADDRESS>
+```
+
+To clean up and re-approve the address afterwards:
+
+```bash
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  --source GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  -- add_to_allowlist \
+  --admin GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  --address <TEST_ADDRESS> \
+  --jurisdiction US \
+  --expires_at 0
+```
+
+---
+
+### Scenario 3 — Expired approval
+
+`add_to_allowlist` rejects an `expires_at` that is already in the past
+(`InvalidExpiry (4)`), so you cannot create an expired record directly. The
+workaround is to approve with an expiry just a few ledgers ahead (~15–30 seconds),
+then wait for it to pass.
+
+**Expected error on transfer:** `SenderNotCompliant (7)` or `RecipientNotCompliant (8)`.
+
+```bash
+# Step 1: read the current ledger number
+stellar network status testnet
+# note the "ledger" field, e.g. 3514200
+
+# Step 2: approve with an expiry 5 ledgers from now (~25 seconds)
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  --source GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  -- add_to_allowlist \
+  --admin GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  --address <TEST_ADDRESS> \
+  --jurisdiction US \
+  --expires_at 3514205
+
+# Step 3: wait ~30 seconds for the expiry ledger to pass, then verify
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  -- is_allowed \
+  --address <TEST_ADDRESS>
+# expected output: false
+```
+
+You can also get the current ledger programmatically before setting up the fixture:
+
+```ts
+const server = new rpc.Server("https://soroban-testnet.stellar.org");
+const { sequence } = await server.getLatestLedger();
+console.log("current ledger:", sequence);
+// set expires_at = sequence + 5 in the CLI command above
+```
+
+<CalloutBox variant="note" title="Why not expires_at = 0?">
+<code>expires_at = 0</code> means the approval <em>never</em> expires — it is not
+a past ledger. To test the expiry path you must use a real future ledger and wait
+for it to pass.
+</CalloutBox>
+
+---
+
+### Scenario 4 — Blocked jurisdiction
+
+Approve the address normally, then block its jurisdiction. The individual record
+is untouched but `is_allowed` returns `false` for every address in that
+jurisdiction.
+
+**Expected error on transfer:** `SenderNotCompliant (7)` or `RecipientNotCompliant (8)`.
+
+```bash
+# Step 1: approve the test address in jurisdiction "ZZ" (avoid blocking "US"
+# if other test addresses use it — pick an unused jurisdiction code for testing)
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  --source GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  -- add_to_allowlist \
+  --admin GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  --address <TEST_ADDRESS> \
+  --jurisdiction ZZ \
+  --expires_at 0
+
+# Step 2: block the jurisdiction
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  --source GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  -- block_jurisdiction \
+  --admin GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  --jurisdiction ZZ
+
+# Verify — should return false despite Approved status
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  -- is_allowed \
+  --address <TEST_ADDRESS>
+```
+
+To clean up, unblock the jurisdiction afterwards to avoid affecting other tests:
+
+```bash
+stellar contract invoke \
+  --network testnet \
+  --id CBUERYDM7DXTZLLKDBRJKUBPFJ7M4OSUN4T7XKUARU345RLXNAIQD2IU \
+  --source GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  -- unblock_jurisdiction \
+  --admin GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  --jurisdiction ZZ
+```
+
+---
+
+### Scenario 5 — Paused token
+
+Pausing is not a compliance check — it is a separate flag on the asset-token
+contract that halts all transfers and mints regardless of approval status. Both
+sender and recipient can be fully approved and the transfer still reverts.
+
+**Expected error on transfer:** `Paused (6)`.
+
+```bash
+# Pause the sample asset token
+stellar contract invoke \
+  --network testnet \
+  --id CBMCWLSQSWUTLUJFCNBHNBSXMUM3XU7NAQ5TSNERW4HA4ZZBYHLG4ECZ \
+  --source GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  -- pause \
+  --admin GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA
+```
+
+Attempt a transfer between two fully approved addresses — it reverts with
+`Paused (6)`. Unpause to restore normal operation:
+
+```bash
+stellar contract invoke \
+  --network testnet \
+  --id CBMCWLSQSWUTLUJFCNBHNBSXMUM3XU7NAQ5TSNERW4HA4ZZBYHLG4ECZ \
+  --source GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA \
+  -- unpause \
+  --admin GAIQGTOBTTLLDJ4SWGGESM7UWJ2DI4K3ZNHUSHPDKJL2IE5FKY3BSRAA
+```
+
+<CalloutBox variant="warning" title="Shared Testnet contracts">
+The compliance and asset-token contracts in these examples are the shared sample
+deployment. Blocking a jurisdiction or pausing the token affects every user of
+that deployment. For isolated testing, deploy your own contract instances and use
+those IDs instead.
+</CalloutBox>
+
+For a full description of each error code and the conditions that produce it, see
+the [Compliance contract reference](/docs/contracts/compliance) and the
+[Asset Token contract reference](/docs/contracts/asset-token).
+
 ## Retries, failover and rate limits
 
 Public Soroban RPC endpoints are shared infrastructure: expect occasional
