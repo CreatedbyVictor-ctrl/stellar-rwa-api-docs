@@ -885,11 +885,22 @@
           },
           "status": {
             "type": "string",
-            "description": "Compliance status for this asset"
+            "description": "KYC status from the on-chain record: \"Approved\", \"Suspended\", \"Rejected\", \"Pending\", or \"none\" if the address is unknown to this asset's compliance contract"
           },
           "allowed": {
             "type": "boolean",
-            "description": "Whether the address is currently allowed to hold the asset"
+            "description": "true when status is Approved, the record has not expired at the latest indexed ledger, and the jurisdiction is not blocked. false otherwise."
+          },
+          "jurisdiction": {
+            "type": "string",
+            "nullable": true,
+            "description": "ISO jurisdiction code from the on-chain KYC record, or null if the address is unknown."
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true,
+            "description": "Ledger number at which approval expires. null means no expiry is set or the address is unknown."
           }
         }
       },

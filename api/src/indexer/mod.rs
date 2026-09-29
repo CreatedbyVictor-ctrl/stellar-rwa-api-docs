@@ -26,7 +26,8 @@ use stellar_xdr::curr as xdr;
 use stellar_xdr::curr::{Limits, ReadXdr, WriteXdr};
 
 use crate::models::{
-    Asset, ComplianceSummary, Distribution, Event, Holder, JurisdictionCount, Stats,
+    Asset, ComplianceRecord, ComplianceSummary, Distribution, Event, Holder, JurisdictionCount,
+    Stats,
 };
 
 /// How often the indexer refreshes its snapshot.
@@ -150,6 +151,13 @@ pub struct Snapshot {
     pub assets: Vec<Asset>,
     pub holders: HashMap<u64, Vec<Holder>>,
     pub compliance: HashMap<u64, ComplianceSummary>,
+    /// Per-asset per-address compliance records.
+    ///
+    /// Keyed by `(asset_id, address)` — outer map is asset_id, inner map is
+    /// the holder address.  Populated from the real on-chain KYC records read
+    /// during `index_compliance_and_holders`.  Routes use this to derive
+    /// `status` and `allowed` without a separate RPC call.
+    pub compliance_records: HashMap<u64, HashMap<String, ComplianceRecord>>,
     pub dividends: HashMap<u64, Vec<Distribution>>,
     pub events: Vec<Event>,
     pub stats: Stats,
@@ -171,6 +179,8 @@ impl Snapshot {
         self.holders
             .retain(|asset_id, _| current_asset_ids.contains(asset_id));
         self.compliance
+            .retain(|asset_id, _| current_asset_ids.contains(asset_id));
+        self.compliance_records
             .retain(|asset_id, _| current_asset_ids.contains(asset_id));
         self.dividends
             .retain(|asset_id, _| current_asset_ids.contains(asset_id));
@@ -451,6 +461,31 @@ impl Rpc {
             latest_ledger: result.latest_ledger,
         })
     }
+}
+
+/// Derive whether an address is allowed to transact, mirroring the on-chain
+/// compliance gate:
+///   - status must be `"Approved"`
+///   - `expires_at` must be 0 (no expiry) or greater than `latest_ledger`
+///   - the `jurisdiction` must not be in `blocked_jurisdictions`
+///
+/// This is a pure function so it can be called from routes without an RPC
+/// round-trip; it uses the `ComplianceRecord` already stored in the snapshot.
+pub fn derive_allowed(
+    rec: &crate::models::ComplianceRecord,
+    latest_ledger: u32,
+    blocked_jurisdictions: &std::collections::HashSet<String>,
+) -> bool {
+    if rec.status != "Approved" {
+        return false;
+    }
+    if rec.expires_at != 0 && rec.expires_at <= latest_ledger {
+        return false;
+    }
+    if blocked_jurisdictions.contains(&rec.jurisdiction) {
+        return false;
+    }
+    true
 }
 
 /// Jittered exponential backoff for the `attempt`-th failed read (1-indexed).
@@ -798,6 +833,8 @@ impl Indexer {
         let mut assets = Vec::new();
         let mut holders_map: HashMap<u64, Vec<Holder>> = HashMap::new();
         let mut compliance_map: HashMap<u64, ComplianceSummary> = HashMap::new();
+        let mut compliance_records_map: HashMap<u64, HashMap<String, ComplianceRecord>> =
+            HashMap::new();
         let mut dividends_map: HashMap<u64, Vec<Distribution>> = HashMap::new();
         let mut total_distributions = 0usize;
         let mut tvl: i128 = 0;
@@ -839,6 +876,9 @@ impl Indexer {
                         if let Some(prev_comp) = prev.compliance.get(&raw.id) {
                             compliance_map.insert(raw.id, prev_comp.clone());
                         }
+                        if let Some(prev_crecs) = prev.compliance_records.get(&raw.id) {
+                            compliance_records_map.insert(raw.id, prev_crecs.clone());
+                        }
                         if let Some(prev_dists) = prev.dividends.get(&raw.id) {
                             dividends_map.insert(raw.id, prev_dists.clone());
                         }
@@ -871,6 +911,9 @@ impl Indexer {
                         if let Some(prev_comp) = prev.compliance.get(&raw.id) {
                             compliance_map.insert(raw.id, prev_comp.clone());
                         }
+                        if let Some(prev_crecs) = prev.compliance_records.get(&raw.id) {
+                            compliance_records_map.insert(raw.id, prev_crecs.clone());
+                        }
                         if let Some(prev_dists) = prev.dividends.get(&raw.id) {
                             total_distributions += prev_dists.len();
                             dividends_map.insert(raw.id, prev_dists.clone());
@@ -887,7 +930,7 @@ impl Indexer {
 
             // Holders: every allowlisted address with a positive balance.
             // Also best-effort: fall back to previous holders on failure.
-            let (holders, summary, compliance_err) = match self
+            let (holders, summary, crecs, compliance_err) = match self
                 .index_compliance_and_holders(
                     &meta.compliance_contract,
                     &raw.token_contract,
@@ -895,7 +938,7 @@ impl Indexer {
                 )
                 .await
             {
-                Ok(result) => (result.0, result.1, None),
+                Ok(result) => (result.0, result.1, result.2, None),
                 Err(e) => {
                     record_asset_read_error(raw.id, "compliance");
                     tracing::warn!(
@@ -905,7 +948,12 @@ impl Indexer {
                     );
                     let holders = prev.holders.get(&raw.id).cloned().unwrap_or_default();
                     let summary = prev.compliance.get(&raw.id).cloned().unwrap_or_default();
-                    (holders, summary, Some(e.to_string()))
+                    let crecs = prev
+                        .compliance_records
+                        .get(&raw.id)
+                        .cloned()
+                        .unwrap_or_default();
+                    (holders, summary, crecs, Some(e.to_string()))
                 }
             };
 
@@ -956,6 +1004,7 @@ impl Indexer {
 
             holders_map.insert(raw.id, holders);
             compliance_map.insert(raw.id, summary);
+            compliance_records_map.insert(raw.id, crecs);
             dividends_map.insert(raw.id, dists);
             assets.push(asset);
         }
@@ -983,6 +1032,7 @@ impl Indexer {
             assets,
             holders: holders_map,
             compliance: compliance_map,
+            compliance_records: compliance_records_map,
             dividends: dividends_map,
             events: Vec::new(),
             stats,
@@ -992,12 +1042,17 @@ impl Indexer {
 
     /// Read the compliance allowlist for an asset and derive both the holder
     /// list (allowlisted ∩ positive balance) and the non-PII summary.
+    ///
+    /// Returns `(holders, summary, compliance_records)` where `compliance_records`
+    /// is a map from address to its real on-chain `ComplianceRecord`.  The
+    /// records are stored in the snapshot so routes can derive `status` and
+    /// `allowed` without extra RPC calls.
     async fn index_compliance_and_holders(
         &self,
         compliance_contract: &str,
         token_contract: &str,
         total_supply: i128,
-    ) -> Result<(Vec<Holder>, ComplianceSummary, Vec<String>), IndexError> {
+    ) -> Result<(Vec<Holder>, ComplianceSummary, HashMap<String, ComplianceRecord>), IndexError> {
         let allowlist = self
             .rpc
             .read(compliance_contract, "get_allowlist", vec![])
@@ -1007,12 +1062,12 @@ impl Indexer {
         let mut holders = Vec::new();
         let mut summary = ComplianceSummary::default();
         let mut jurisdictions: BTreeMap<String, usize> = BTreeMap::new();
-        let mut approved_addresses = Vec::new();
+        let mut records: HashMap<String, ComplianceRecord> = HashMap::new();
 
         for address in &addresses {
             summary.total_records += 1;
 
-            // Record status → summary counts.
+            // Record status → summary counts and real ComplianceRecord.
             if let Ok(rec) = self
                 .rpc
                 .read(
@@ -1024,10 +1079,10 @@ impl Indexer {
             {
                 if !rec.value.is_null() {
                     if let Ok(kyc) = serde_json::from_value::<RawKyc>(rec.value) {
-                        match normalize_status(&kyc.status).as_str() {
+                        let status = normalize_status(&kyc.status);
+                        match status.as_str() {
                             "Approved" => {
                                 summary.approved += 1;
-                                approved_addresses.push(address.clone());
                             }
                             "Suspended" => summary.suspended += 1,
                             "Rejected" => summary.rejected += 1,
@@ -1037,7 +1092,17 @@ impl Indexer {
                         if kyc.expires_at != 0 {
                             summary.with_expiry += 1;
                         }
-                        *jurisdictions.entry(kyc.jurisdiction).or_insert(0) += 1;
+                        *jurisdictions.entry(kyc.jurisdiction.clone()).or_insert(0) += 1;
+
+                        // Persist the real record for route-level allowed derivation.
+                        records.insert(
+                            address.clone(),
+                            ComplianceRecord {
+                                status,
+                                jurisdiction: kyc.jurisdiction,
+                                expires_at: kyc.expires_at,
+                            },
+                        );
                     }
                 }
             }
@@ -1070,7 +1135,7 @@ impl Indexer {
             })
             .collect();
 
-        Ok((holders, summary, approved_addresses))
+        Ok((holders, summary, records))
     }
 
     async fn check_abi(&self, contract: &str) -> Result<(), IndexError> {
@@ -1205,6 +1270,11 @@ mod tests {
                 (2, ComplianceSummary::default()),
                 (99, ComplianceSummary::default()),
             ]),
+            compliance_records: HashMap::from([
+                (1, HashMap::new()),
+                (2, HashMap::new()),
+                (99, HashMap::new()),
+            ]),
             dividends: HashMap::from([(1, Vec::new()), (2, Vec::new()), (99, Vec::new())]),
             events: Vec::new(),
             stats: Stats::default(),
@@ -1221,6 +1291,10 @@ mod tests {
             HashSet::from([1, 2])
         );
         assert_eq!(
+            snapshot.compliance_records.keys().copied().collect::<HashSet<_>>(),
+            HashSet::from([1, 2])
+        );
+        assert_eq!(
             snapshot.dividends.keys().copied().collect::<HashSet<_>>(),
             HashSet::from([1, 2])
         );
@@ -1232,6 +1306,7 @@ mod tests {
             assets: Vec::new(),
             holders: HashMap::from([(7, Vec::new())]),
             compliance: HashMap::from([(7, ComplianceSummary::default())]),
+            compliance_records: HashMap::from([(7, HashMap::new())]),
             dividends: HashMap::from([(7, Vec::new())]),
             events: Vec::new(),
             stats: Stats::default(),
@@ -1241,6 +1316,7 @@ mod tests {
 
         assert!(snapshot.holders.is_empty());
         assert!(snapshot.compliance.is_empty());
+        assert!(snapshot.compliance_records.is_empty());
         assert!(snapshot.dividends.is_empty());
     }
 
@@ -1648,6 +1724,7 @@ mod tests {
                     .iter()
                     .map(|&id| (id, ComplianceSummary::default()))
                     .collect(),
+                compliance_records: ids.iter().map(|&id| (id, HashMap::new())).collect(),
                 dividends: ids.iter().map(|&id| (id, Vec::new())).collect(),
                 events: Vec::new(),
                 stats: Stats {
@@ -1708,6 +1785,11 @@ mod tests {
                                 snapshot.compliance.keys().copied().collect::<HashSet<_>>(),
                                 expected,
                                 "compliance map belongs to a different generation"
+                            );
+                            assert_eq!(
+                                snapshot.compliance_records.keys().copied().collect::<HashSet<_>>(),
+                                expected,
+                                "compliance_records map belongs to a different generation"
                             );
                             assert_eq!(
                                 snapshot.dividends.keys().copied().collect::<HashSet<_>>(),
@@ -2116,6 +2198,7 @@ mod tests {
                     ..ComplianceSummary::default()
                 },
             )]),
+            compliance_records: HashMap::from([(7, HashMap::new())]),
             dividends: HashMap::from([(
                 7,
                 vec![Distribution {
@@ -2162,6 +2245,10 @@ mod tests {
         assert!(
             served.compliance.contains_key(&7),
             "last good compliance must survive a failed read"
+        );
+        assert!(
+            served.compliance_records.contains_key(&7),
+            "last good compliance_records must survive a failed read"
         );
         assert!(
             served.dividends.contains_key(&7),
