@@ -2,9 +2,12 @@ export const metadata = {
   title: "API · Events",
   description: "Recent contract events emitted by the indexer.",
   canonical: "/docs/api/events",
+  lastReviewed: "2026-09-28",
 };
 
 # Events
+
+<LastReviewed date={metadata.lastReviewed} />
 
 The API exposes a compact event stream for clients that need to react to state changes without polling the full asset list. The payload is a JSON array ordered newest-first.
 
@@ -32,6 +35,17 @@ curl "$API_BASE_URL/events?limit=20"
 ```
 
 </ApiEndpoint>
+
+**Response schema** (`Event`, per event):
+
+| Field | Type | Unit | Nullable | Description |
+|-------|------|------|----------|-------------|
+| `id` | integer | Event id | No | Indexer-assigned event id |
+| `contract` | string | — | No | Contract address that emitted the event |
+| `event_type` | string | — | No | Event name |
+| `ledger` | integer | Ledger sequence | No | Ledger containing the event |
+| `timestamp` | string | RFC 3339 timestamp | Yes | JSON `null` when the ledger timestamp is unavailable |
+| `data` | JSON value | — | No | Raw event payload |
 
 Each event includes the contract address, event name, ledger, timestamp (when available), and the raw payload emitted by the contract.
 
@@ -65,3 +79,9 @@ const displayAmount = Number(rawAmount) / (10 ** 2);
 // => 1.00 token
 ```
 </CalloutBox>
+## What to read next
+
+- [API Overview](/docs/api/overview) — conventions, caching, and the full endpoint list.
+- [Asset Token Contract](/docs/contracts/asset-token) — the event topics emitted by `transfer`, `mint`, and `burn`.
+- [Rate Limits & Caching](/docs/api/rate-limits) — ETag support on the events endpoint.
+- [Time & Ledgers](/docs/time-and-ledgers) — understand `ledger` values in event payloads.
