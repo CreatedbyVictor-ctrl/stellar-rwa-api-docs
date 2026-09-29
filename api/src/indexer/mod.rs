@@ -83,6 +83,9 @@ impl AbiExpectation {
 }
 const TESTNET_RPC: &str = "https://soroban-testnet.stellar.org";
 
+/// Page size for paginated `get_all_assets(start_id, limit)` calls.
+const REGISTRY_PAGE_SIZE: u32 = 50;
+
 /// Fee used for read-only `simulateTransaction` envelopes.
 ///
 /// This envelope is never submitted to the network — it exists only for
@@ -861,12 +864,13 @@ impl Indexer {
         self.check_abi(&cfg.dividend_id, &self.state.abi.dividend, "dividend")
             .await?;
 
-        let entries_read = self
-            .rpc
-            .read(&cfg.registry_id, "get_all_assets", vec![])
-            .await?;
-        let latest_ledger = entries_read.latest_ledger;
-        let raw_entries: Vec<RawAssetEntry> = serde_json::from_value(entries_read.value)?;
+        // ── registry pagination ───────────────────────────────────────────────
+        // The registry contract on the current main branch exposes a paginated
+        // signature: get_all_assets(start_id: u64, limit: u32) -> Vec<AssetEntry>.
+        // Older deployments accepted no arguments.  We try the paginated form
+        // first; if the RPC returns a simulation error we fall back to the
+        // no-argument call for backward compatibility.
+        let (raw_entries, latest_ledger) = self.fetch_all_assets(&cfg.registry_id).await?;
 
         // Grab the previous snapshot so we can carry forward per-asset
         // freshness info for assets that fail this cycle.
@@ -1090,6 +1094,89 @@ impl Indexer {
             stats,
         });
         Ok(count)
+    }
+
+    /// Read every asset from the registry using the paginated
+    /// `get_all_assets(start_id, limit)` signature introduced on the main
+    /// branch of the contracts repo.
+    ///
+    /// If the first page call returns an RPC simulation error (which happens
+    /// when the registry was deployed before pagination was added — it rejects
+    /// the two-argument call with a host-function error), the method
+    /// automatically retries with the legacy zero-argument form and returns
+    /// that result instead.  This lets the API work against both deployed
+    /// contract versions without operator intervention.
+    ///
+    /// Returns the concatenated `Vec<RawAssetEntry>` and the `latest_ledger`
+    /// from the first successful RPC call (the ledger advances only slightly
+    /// between pages so using the first one is accurate enough).
+    async fn fetch_all_assets(
+        &self,
+        registry_id: &str,
+    ) -> Result<(Vec<RawAssetEntry>, u32), IndexError> {
+        // Try paginated form first.
+        let first_page = self
+            .rpc
+            .read(
+                registry_id,
+                "get_all_assets",
+                vec![
+                    xdr::ScVal::U64(0), // start_id
+                    xdr::ScVal::U32(REGISTRY_PAGE_SIZE),
+                ],
+            )
+            .await;
+
+        match first_page {
+            Err(IndexError::Rpc(_)) => {
+                // Simulation error: registry does not accept arguments.
+                // Fall back to the legacy no-argument signature.
+                tracing::info!(
+                    "get_all_assets(start_id, limit) rejected; \
+                     falling back to legacy no-argument call"
+                );
+                let result = self
+                    .rpc
+                    .read(registry_id, "get_all_assets", vec![])
+                    .await?;
+                let entries: Vec<RawAssetEntry> = serde_json::from_value(result.value)?;
+                return Ok((entries, result.latest_ledger));
+            }
+            Err(e) => return Err(e),
+            Ok(page) => {
+                let latest_ledger = page.latest_ledger;
+                let mut all: Vec<RawAssetEntry> = serde_json::from_value(page.value)?;
+
+                // Keep fetching until we get a short page.
+                loop {
+                    if all.len() % REGISTRY_PAGE_SIZE as usize != 0 || all.is_empty() {
+                        break;
+                    }
+                    // next start_id = last id + 1
+                    let start_id = all.last().map(|e| e.id + 1).unwrap_or(0);
+                    let next_page = self
+                        .rpc
+                        .read(
+                            registry_id,
+                            "get_all_assets",
+                            vec![
+                                xdr::ScVal::U64(start_id),
+                                xdr::ScVal::U32(REGISTRY_PAGE_SIZE),
+                            ],
+                        )
+                        .await?;
+                    let page_entries: Vec<RawAssetEntry> =
+                        serde_json::from_value(next_page.value)?;
+                    let is_last = page_entries.len() < REGISTRY_PAGE_SIZE as usize;
+                    all.extend(page_entries);
+                    if is_last {
+                        break;
+                    }
+                }
+
+                Ok((all, latest_ledger))
+            }
+        }
     }
 
     /// Read the compliance allowlist for an asset and derive both the holder

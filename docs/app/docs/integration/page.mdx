@@ -285,5 +285,5 @@ read from a node that is lagging behind.
 ## Contract addresses
 
 All Testnet contract ids are listed in [Getting Started](/docs/getting-started#deployed-contract-addresses-testnet).
-Asset-token contract ids are discovered from the registry's `get_all_assets` (or
-the API's `/assets`).
+Asset-token contract ids are discovered from the registry's `get_all_assets(start_id, limit)`
+(paginating until a page shorter than `limit` is returned) or from the API's `/v1/assets`.

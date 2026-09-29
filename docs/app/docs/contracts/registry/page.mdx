@@ -60,16 +60,52 @@ fn get_asset(env: Env, asset_id: u64) -> AssetEntry
 
 Fetches a single asset. **Errors:** `AssetNotFound (4)`.
 
-### `get_assets_by_issuer` / `get_assets_by_type` / `get_all_assets`
+### `get_assets_by_issuer` / `get_assets_by_type`
 
 ```rust
 fn get_assets_by_issuer(env: Env, issuer: Address) -> Vec<AssetEntry>
 fn get_assets_by_type(env: Env, asset_type: String) -> Vec<AssetEntry>
-fn get_all_assets(env: Env) -> Vec<AssetEntry>
 ```
 
-Query helpers returning filtered or complete lists. These back the API's
-`/assets` endpoint and the web app's explore page.
+Filtered list helpers. These back the API's `/assets` endpoint and the web
+app's explore page.
+
+### `get_all_assets`
+
+```rust
+fn get_all_assets(env: Env, start_id: u64, limit: u32) -> Vec<AssetEntry>
+```
+
+Returns a page of registered assets starting from `start_id` (inclusive),
+capped at `limit` entries. Page through the full registry by calling again
+with `start_id = last_returned_id + 1` until the returned slice is shorter
+than `limit`.
+
+```ts
+// Page through all assets in TypeScript
+const REGISTRY = "CBX5SMLT…PUR3";
+const PAGE = 50;
+let startId = 0n;
+const all: AssetEntry[] = [];
+do {
+  const op = new Contract(REGISTRY).call(
+    "get_all_assets",
+    nativeToScVal(startId, { type: "u64" }),
+    nativeToScVal(PAGE, { type: "u32" }),
+  );
+  // build → simulate → scValToNative(retval)
+  const page: AssetEntry[] = await simulate(op);
+  all.push(...page);
+  if (page.length < PAGE) break;
+  startId = BigInt(page[page.length - 1].id) + 1n;
+} while (true);
+```
+
+<CalloutBox variant="note">
+Deployments from before pagination was introduced accept no arguments.
+The reference API indexer automatically detects this and falls back to
+the legacy zero-argument call, so it works with both contract versions.
+</CalloutBox>
 
 ### `deactivate_asset`
 
